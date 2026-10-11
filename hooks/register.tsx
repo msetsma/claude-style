@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, Elements, EngineInterface, Register, RenderElement, RenderNode, RenderSurface, ThemeKey } from 'claude-code'
 
-import type { Accent, Border, StyleSettings as Settings } from '../types'
+import type { Accent, Border, DrawnBy, StyleSettings as Settings } from '../types'
 
 const PANE = 'style'
 
@@ -18,68 +18,88 @@ export const DEFAULTS: Settings = {
   border: 'round',
   accent: 'claude',
   density: 'normal',
+  prompts: 'style',
   promptStyle: 'bubble',
   promptColor: 'suggestion',
-  bandFrame: 'on',
+  bands: 'style',
   bandBorder: 'global',
+  tools: 'style',
   toolStyle: 'rail',
   toolColor: 'tool',
   toolResult: 'full',
+  notices: 'style',
   noticeStyle: 'line',
   noticeColor: 'global',
+  mode: 'style',
   modeStyle: 'pills',
   modeColor: 'planMode',
+  hint: 'style',
   hintColor: 'global',
   hintDim: 'on',
+  questions: 'style',
   questionFrame: 'global',
   questionColor: 'permission',
+  turnTime: 'style',
   durationStyle: 'rule',
   durationVerb: 'on',
 }
 
 type Key = keyof Settings
+type Site = { [K in Key]: Settings[K] extends DrawnBy ? K : never }[Key]
+const DRAWN_BY = { label: 'Drawn by', values: ['style', 'claude'] } as const
 // Each option: its row label and the values a press cycles through.
 export const OPTIONS: { [K in Key]: { label: string; values: readonly Settings[K][] } } = {
   border: { label: 'Border', values: BORDERS },
   accent: { label: 'Color', values: ACCENTS },
   density: { label: 'Spacing', values: ['compact', 'normal', 'roomy'] },
-  promptStyle: { label: 'Style', values: ['bubble', 'bar', 'plain', 'off'] },
+  prompts: DRAWN_BY,
+  promptStyle: { label: 'Style', values: ['bubble', 'bar', 'plain'] },
   promptColor: { label: 'Color', values: SITE_COLORS },
-  bandFrame: { label: 'Frame', values: ['on', 'off'] },
+  bands: DRAWN_BY,
   bandBorder: { label: 'Border', values: SITE_BORDERS },
-  toolStyle: { label: 'Style', values: ['card', 'rail', 'compact', 'off'] },
+  tools: DRAWN_BY,
+  toolStyle: { label: 'Style', values: ['card', 'rail', 'compact'] },
   toolColor: { label: 'Color by', values: ['tool', 'status', 'mono'] },
   toolResult: { label: 'Output', values: ['full', 'summary', 'hidden'] },
-  noticeStyle: { label: 'Style', values: ['card', 'line', 'off'] },
+  notices: DRAWN_BY,
+  noticeStyle: { label: 'Style', values: ['card', 'line'] },
   noticeColor: { label: 'Color', values: SITE_COLORS },
-  modeStyle: { label: 'Style', values: ['pills', 'brackets', 'plain', 'off'] },
+  mode: DRAWN_BY,
+  modeStyle: { label: 'Style', values: ['pills', 'brackets', 'plain'] },
   modeColor: { label: 'Color', values: SITE_COLORS },
-  hintColor: { label: 'Color', values: ['original', ...SITE_COLORS] },
+  hint: DRAWN_BY,
+  hintColor: { label: 'Color', values: SITE_COLORS },
   hintDim: { label: 'Dimmed', values: ['on', 'off'] },
-  questionFrame: { label: 'Tab border', values: ['off', ...SITE_BORDERS] },
+  questions: DRAWN_BY,
+  questionFrame: { label: 'Tab border', values: SITE_BORDERS },
   questionColor: { label: 'Color', values: SITE_COLORS },
-  durationStyle: { label: 'Style', values: ['rule', 'compact', 'original', 'hidden'] },
+  turnTime: DRAWN_BY,
+  durationStyle: { label: 'Style', values: ['rule', 'compact', 'hidden'] },
   durationVerb: { label: 'Show verb', values: ['on', 'off'] },
 }
-// Each group: its title, what it changes on screen, and its rows.
+// Each group: its title, what it changes on screen, and its rows, the site's Drawn by first.
 const GROUPS: [string, string, Key[]][] = [
   ['Defaults', 'used where a row says inherit', ['border', 'accent', 'density']],
-  ['Your prompts', 'what you typed, in the transcript', ['promptStyle', 'promptColor']],
-  ['Plugin bands', 'rows other mods draw above the prompt', ['bandFrame', 'bandBorder']],
-  ['Tool calls', 'Write, Edit and other tool rows', ['toolStyle', 'toolColor', 'toolResult']],
-  ['Notices', 'system notes in the transcript', ['noticeStyle', 'noticeColor']],
-  ['Mode badge', 'the plan or auto mode label', ['modeStyle', 'modeColor']],
-  ['Prompt hint', 'the line under the prompt', ['hintColor', 'hintDim']],
-  ['Questions', 'the dialog Claude asks you in', ['questionFrame', 'questionColor']],
-  ['Turn time', 'the "Baked for 3s" line', ['durationStyle', 'durationVerb']],
+  ['Your prompts', 'what you typed, in the transcript', ['prompts', 'promptStyle', 'promptColor']],
+  ['Plugin bands', 'rows other mods draw above the prompt', ['bands', 'bandBorder']],
+  ['Tool calls', 'Write, Edit and other tool rows', ['tools', 'toolStyle', 'toolColor', 'toolResult']],
+  ['Notices', 'system notes in the transcript', ['notices', 'noticeStyle', 'noticeColor']],
+  ['Mode badge', 'the plan or auto mode label', ['mode', 'modeStyle', 'modeColor']],
+  ['Prompt hint', 'the line under the prompt', ['hint', 'hintColor', 'hintDim']],
+  ['Questions', 'the dialog Claude asks you in', ['questions', 'questionFrame', 'questionColor']],
+  ['Turn time', 'the "Baked for 3s" line', ['turnTime', 'durationStyle', 'durationVerb']],
 ]
+const isSite = (k: Key): k is Site => OPTIONS[k] === DRAWN_BY
+// Each row's site: the Drawn by row of its group.
+const SITE_OF = Object.fromEntries(GROUPS.flatMap(([, , keys]) => keys.filter(k => !isSite(k)).map(k => [k, keys.find(isSite)]))) as Partial<Record<Key, Site>>
+// A site this mod draws; one handed to Claude Code is left to the engine.
+const ours = (s: Settings, site: Site) => s[site] === 'style'
 
 // What the pane calls a stored value. Colors are named for what they mean in the theme, not
 // what they look like, so the names hold under any theme, custom ones included; the swatch
 // beside each shows the color the person's theme gives it.
 const NAMES: Record<string, string> = {
   global: 'inherit',
-  original: 'unchanged',
   subtle: 'muted',
   claude: 'brand',
   suggestion: 'suggestion',
@@ -90,20 +110,26 @@ const NAMES: Record<string, string> = {
   ide: 'ide',
   planMode: 'plan mode',
 }
-export const shown = (v: string) => NAMES[v] ?? v
+export const shown = (v: string, k?: Key) => (k && isSite(k) ? (v === 'claude' ? 'Claude Code' : 'style') : (NAMES[v] ?? v))
 
-// A row whose value changes nothing while another row turns its site off is drawn dim.
-const INACTIVE: Partial<Record<Key, (s: Settings) => boolean>> = {
-  promptColor: s => s.promptStyle === 'off',
-  bandBorder: s => s.bandFrame === 'off',
-  toolColor: s => s.toolStyle === 'off',
-  toolResult: s => s.toolStyle === 'off',
-  noticeColor: s => s.noticeStyle === 'off',
-  modeColor: s => s.modeStyle === 'off',
-  hintDim: s => s.hintColor === 'original',
-  questionColor: s => s.questionFrame === 'off',
-  durationVerb: s => s.durationStyle === 'original' || s.durationStyle === 'hidden',
+// A row whose value changes nothing is drawn dim and ignores presses: every row of a site
+// Claude Code draws, and the verb of a hidden turn time.
+const inactive = (s: Settings, k: Key) => {
+  const site = SITE_OF[k]
+  return (site !== undefined && !ours(s, site)) || (k === 'durationVerb' && s.durationStyle === 'hidden')
 }
+
+// Values earlier versions stored for a site left to Claude Code, read as its Drawn by.
+const LEGACY: [string, string, Site][] = [
+  ['promptStyle', 'off', 'prompts'],
+  ['bandFrame', 'off', 'bands'],
+  ['toolStyle', 'off', 'tools'],
+  ['noticeStyle', 'off', 'notices'],
+  ['modeStyle', 'off', 'mode'],
+  ['hintColor', 'original', 'hint'],
+  ['questionFrame', 'off', 'questions'],
+  ['durationStyle', 'original', 'turnTime'],
+]
 const KEYS = Object.keys(OPTIONS) as Key[]
 
 // Padding inside a frame and the blank row above it.
@@ -134,6 +160,7 @@ export function loadSettings(raw: unknown): Settings {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const s = { ...DEFAULTS } as Record<Key, unknown>
   for (const k of KEYS) if ((OPTIONS[k].values as readonly unknown[]).includes(r[k])) s[k] = r[k]
+  for (const [old, value, site] of LEGACY) if (r[old] === value && r[site] === undefined) s[site] = 'claude'
   return s as Settings
 }
 
@@ -193,25 +220,22 @@ const BORDER_SAMPLES: Record<Border, string> = {
 }
 const SAMPLES: Partial<Record<Key, Record<string, string>>> = {
   density: { compact: '│hi│', normal: '│ hi │', roomy: '│  hi  │' },
-  bandFrame: { off: 'no frame' },
-  promptStyle: { bubble: '╭ ❯ hi ╮', bar: '▎ hi', plain: '❯ hi', off: 'as Claude draws it' },
-  toolStyle: { card: '╭ ⏺ Edit ╮', rail: '▎⏺ Edit', compact: '● Edit a.ts', off: 'as Claude draws it' },
+  promptStyle: { bubble: '╭ ❯ hi ╮', bar: '▎ hi', plain: '❯ hi' },
+  toolStyle: { card: '╭ Edit(a.ts) ╮', rail: '▎ Edit(a.ts)', compact: 'Edit(a.ts)' },
   toolColor: { mono: 'one color' },
   toolResult: { full: '⎿ every line', summary: '⎿ first lines …', hidden: 'errors only' },
-  noticeStyle: { card: '╭ note ╮', line: 'note /cmd', off: 'as Claude draws it' },
-  modeStyle: { brackets: '[auto]', plain: 'auto', off: 'as Claude draws it' },
-  questionFrame: { off: 'no tab' },
-  hintColor: { original: 'as Claude draws it' },
-  durationStyle: { rule: '── Baked 3s ──', compact: '✻ 3s', original: '✻ Baked for 3s', hidden: 'nothing' },
+  noticeStyle: { card: '╭ note ╮', line: 'note /cmd' },
+  modeStyle: { brackets: '[auto]', plain: 'auto' },
+  durationStyle: { rule: '── Baked 3s ──', compact: '✻ 3s', hidden: 'nothing' },
   durationVerb: { on: 'Baked 3s', off: '3s' },
 }
 
 // A colored glyph column beside `body`, as tall as it: an absolute Box spanning the row, its long
-// text clipped to that height. `top` skips rows the body opens with (the engine's blank line).
-function railed({ Box, Text }: Pick<Elements[RenderSurface], 'Box' | 'Text'>, color: Color, glyph: string, body: RenderElement, top = 0) {
+// text clipped to that height.
+function railed({ Box, Text }: Pick<Elements[RenderSurface], 'Box' | 'Text'>, color: Color, glyph: string, body: RenderElement) {
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <Box position="absolute" top={top} bottom={0} left={0} width={1} overflow="hidden">
+      <Box position="absolute" top={0} bottom={0} left={0} width={1} overflow="hidden">
         <Text color={color}>{`${glyph}\n`.repeat(400)}</Text>
       </Box>
       {body}
@@ -225,7 +249,7 @@ type Inner = () => Promise<RenderElement>
 
 // Your own prompts: a rounded bubble sized to the text, a colored rail, or a plain colored ❯.
 function drawPrompt(els: Els, s: Settings, text: string) {
-  if (s.promptStyle === 'off') return undefined
+  if (!ours(s, 'prompts')) return undefined
   const { Box, Text } = els
   const color = colorOf(s, s.promptColor)
   const { padX, marginTop } = SPACING[s.density]
@@ -254,30 +278,27 @@ function drawBand({ Box }: Els, s: Settings, inner: RenderElement) {
   )
 }
 
-// A tool call's row: the engine's drawing in a card or beside a rail, or one line of our own.
-async function drawTool(els: Els, s: Settings, call: { tool: string; input: unknown; isRunning: boolean; isErrored: boolean }, inner: Inner) {
-  if (s.toolStyle === 'off') return undefined
+// A tool call's row, our own `Tool(target)` line in place of the engine's `⏺` one: the rail or
+// card carries the color, and compact colors the name.
+function drawTool(els: Els, s: Settings, call: { tool: string; input: unknown; isRunning: boolean; isErrored: boolean; isInterrupted?: boolean }) {
+  if (!ours(s, 'tools')) return undefined
   const { Box, Text } = els
   const color = toolColor(s, call.tool, call.isRunning, call.isErrored)
-  if (s.toolStyle === 'compact')
-    return (
-      <Box marginTop={SPACING[s.density].marginTop}>
-        <Text wrap="truncate">
-          <Text color={color}>● </Text>
-          <Text bold>{call.tool.replace(/^mcp__/, '')}</Text>
-          <Text dimColor> {target(call.input)}</Text>
-        </Text>
-      </Box>
-    )
-  // The engine's row opens with a blank line: the rail starts below it, the card pulls it under its
-  // top border and keeps the density's own gap above.
-  if (s.toolStyle === 'rail') return railed(els, color, '▎', await inner(), 1)
+  const about = target(call.input)
+  const line = (
+    <Text wrap="truncate">
+      <Text bold color={s.toolStyle === 'compact' ? color : undefined}>{call.tool.replace(/^mcp__/, '')}</Text>
+      {about ? <Text dimColor>({about})</Text> : null}
+      {call.isRunning ? <Text dimColor> …</Text> : null}
+      {call.isInterrupted ? <Text color="error"> Interrupted</Text> : null}
+    </Text>
+  )
   const { padX, marginTop } = SPACING[s.density]
+  if (s.toolStyle === 'compact') return <Box marginTop={marginTop}>{line}</Box>
+  if (s.toolStyle === 'rail') return <Box marginTop={marginTop}>{railed(els, color, '▎', line)}</Box>
   return (
-    <Box borderStyle={s.border} borderColor={color} paddingX={padX} marginTop={marginTop} flexDirection="column">
-      <Box marginTop={-1} flexDirection="column">
-        {await inner()}
-      </Box>
+    <Box borderStyle={s.border} borderColor={color} paddingX={padX} marginTop={marginTop} alignSelf="flex-start">
+      {line}
     </Box>
   )
 }
@@ -285,6 +306,7 @@ async function drawTool(els: Els, s: Settings, call: { tool: string; input: unkn
 // A tool's result: the engine's drawing (beside the call's rail), its first line, or nothing.
 // An error always shows whole.
 async function drawResult(els: Els, s: Settings, result: { tool: string; output: unknown; isErrored: boolean }, inner: Inner) {
+  if (!ours(s, 'tools')) return inner()
   const { Box, Text } = els
   const glyph = s.toolStyle === 'rail' ? '▎' : s.toolStyle === 'card' ? '┆' : undefined
   const beside = (body: RenderElement) => (glyph ? railed(els, toolColor(s, result.tool, false, result.isErrored), glyph, body) : body)
@@ -304,7 +326,7 @@ async function drawResult(els: Els, s: Settings, result: { tool: string; output:
 
 // The dim notices under the logo, after the engine's own `▎` mark: a card, or a dim line in the color.
 function drawNotice({ Box, Text }: Els, s: Settings, text: string, command: string | null) {
-  if (s.noticeStyle === 'off') return undefined
+  if (!ours(s, 'notices')) return undefined
   const color = colorOf(s, s.noticeColor)
   const line = s.noticeStyle === 'line'
   const body = (
@@ -323,7 +345,7 @@ function drawNotice({ Box, Text }: Els, s: Settings, text: string, command: stri
 
 // The mode labels at the right of the footer, as pills, in brackets or plain.
 function drawMode({ Text }: Els, s: Settings, modes: readonly string[]) {
-  if (s.modeStyle === 'off') return undefined
+  if (!ours(s, 'mode')) return undefined
   const color = colorOf(s, s.modeColor)
   const label = (m: string) =>
     s.modeStyle === 'pills' ? <Text inverse color={color}> {m} </Text> : <Text color={color}>{s.modeStyle === 'brackets' ? `[${m}]` : m}</Text>
@@ -333,7 +355,7 @@ function drawMode({ Text }: Els, s: Settings, modes: readonly string[]) {
 
 // The hint under the prompt, recolored; its text is the engine's.
 function drawHint({ Text }: Els, s: Settings, hint: string, tail?: string | null) {
-  if (s.hintColor === 'original') return undefined
+  if (!ours(s, 'hint')) return undefined
   return (
     <Text color={colorOf(s, s.hintColor)} dimColor={s.hintDim === 'on'} wrap="truncate">
       {hint}
@@ -346,7 +368,7 @@ function drawHint({ Text }: Els, s: Settings, hint: string, tail?: string | null
 // and color that sits on the dialog's top divider. Only a tab above: the engine refuses a tree that
 // draws below the dialog, and a border's side columns would wrap the dividers it draws full width.
 async function drawQuestion({ Box, Text }: Els, s: Settings, inner: Inner) {
-  if (s.questionFrame === 'off') return undefined
+  if (!ours(s, 'questions')) return undefined
   const [left, line, right] = BORDER_SAMPLES[borderOf(s, s.questionFrame)]
   return (
     <Box flexDirection="column" marginTop={SPACING[s.density].marginTop}>
@@ -358,7 +380,7 @@ async function drawQuestion({ Box, Text }: Els, s: Settings, inner: Inner) {
 
 // The line that closes a turn: a dim rule across the width, a short `✻ 3s`, or nothing.
 function drawDuration({ Box, Text }: Els, s: Settings, word: string, ms: number, columns: number) {
-  if (s.durationStyle === 'original') return undefined
+  if (!ours(s, 'turnTime')) return undefined
   if (s.durationStyle === 'hidden') return <Box />
   const label = s.durationVerb === 'on' ? `${word} ${duration(ms)}` : duration(ms)
   const { marginTop } = SPACING[s.density]
@@ -381,48 +403,46 @@ function drawDuration({ Box, Text }: Els, s: Settings, word: string, ms: number,
 async function drawPreview(els: Els, s: Settings, columns: number) {
   const { Box, Text } = els
   const plain = (text: string) => <Text dimColor>{text}</Text>
-  // The engine's tool row opens with a blank line, as the rail and card expect.
-  const call = (tool: string, input: Record<string, string>, isErrored = false) => {
-    const row = async () => (
+  const call = (tool: string, input: Record<string, string>, isErrored = false) =>
+    drawTool(els, s, { tool, input, isRunning: false, isErrored }) ?? (
       <Box marginTop={1}>
         <Text>
           ⏺ <Text bold>{tool}</Text>({Object.values(input)[0]})
         </Text>
       </Box>
     )
-    return drawTool(els, s, { tool, input, isRunning: false, isErrored }, row).then(r => r ?? row())
-  }
   const result = (tool: string, output: string, isErrored = false) =>
     drawResult(els, s, { tool, output, isErrored }, async () => <Text color={isErrored ? 'error' : undefined}>{`  ⎿  ${output.replace(/\n/g, '\n     ')}`}</Text>)
   const question = async () => <Text>Which approach should I take?</Text>
-  const sites: [string, string, RenderNode][] = [
-    ['Your prompts', shown(s.promptStyle), drawPrompt(els, s, 'fix the login bug') ?? plain('❯ fix the login bug')],
-    ['Plugin bands', s.bandFrame === 'off' ? 'off' : shown(borderOf(s, s.bandBorder)), s.bandFrame === 'off' ? plain('a row another mod draws') : drawBand(els, s, <Text>a row another mod draws</Text>)],
+  const sites: [Site, string, string, RenderNode][] = [
+    ['prompts', 'Your prompts', shown(s.promptStyle), drawPrompt(els, s, 'fix the login bug') ?? plain('❯ fix the login bug')],
+    ['bands', 'Plugin bands', shown(borderOf(s, s.bandBorder)), ours(s, 'bands') ? drawBand(els, s, <Text>a row another mod draws</Text>) : <Text>a row another mod draws</Text>],
     [
+      'tools',
       'Tool calls',
       `${shown(s.toolStyle)}, by ${shown(s.toolColor)}, output ${shown(s.toolResult)}`,
       <Box flexDirection="column">
-        {await call('Bash', { command: 'npm test' })}
+        {call('Bash', { command: 'npm test' })}
         {await result('Bash', '14 pass\n0 fail\nRan 14 tests')}
-        {await call('Edit', { file_path: 'src/login.ts' })}
+        {call('Edit', { file_path: 'src/login.ts' })}
         {await result('Edit', 'Updated src/login.ts')}
-        {await call('Read', { file_path: 'missing.ts' }, true)}
+        {call('Read', { file_path: 'missing.ts' }, true)}
         {await result('Read', 'File does not exist.', true)}
       </Box>,
     ],
-    ['Notices', shown(s.noticeStyle), drawNotice(els, s, 'Model from settings', '/model') ?? plain('Model from settings /model')],
-    ['Mode badge', shown(s.modeStyle), drawMode(els, s, ['plan', 'auto']) ?? plain('plan & auto')],
-    ['Prompt hint', shown(s.hintColor), drawHint(els, s, '? for shortcuts') ?? plain('? for shortcuts')],
-    ['Questions', shown(s.questionFrame), (await drawQuestion(els, s, question)) ?? (await question())],
-    ['Turn time', shown(s.durationStyle), drawDuration(els, s, 'Baked', 3000, columns) ?? plain('✻ Baked for 3s')],
+    ['notices', 'Notices', shown(s.noticeStyle), drawNotice(els, s, 'Model from settings', '/model') ?? plain('Model from settings /model')],
+    ['mode', 'Mode badge', shown(s.modeStyle), drawMode(els, s, ['plan', 'auto']) ?? plain('plan & auto')],
+    ['hint', 'Prompt hint', shown(s.hintColor), drawHint(els, s, '? for shortcuts') ?? plain('? for shortcuts')],
+    ['questions', 'Questions', shown(s.questionFrame), (await drawQuestion(els, s, question)) ?? (await question())],
+    ['turnTime', 'Turn time', shown(s.durationStyle), drawDuration(els, s, 'Baked', 3000, columns) ?? plain('✻ Baked for 3s')],
   ]
   return (
     <Box flexDirection="column">
-      {sites.map(([title, value, sample], i) => (
+      {sites.map(([site, title, value, sample], i) => (
         <Box key={`preview:${i}`} flexDirection="column" marginTop={i ? 1 : 0}>
           <Text>
             <Text bold color={s.accent}>{title}</Text>
-            <Text dimColor>{`  ${value}`}</Text>
+            <Text dimColor>{`  ${ours(s, site) ? value : 'Claude Code'}`}</Text>
           </Text>
           {sample}
         </Box>
@@ -441,7 +461,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'style' }, async ($, e) => {
     if (e.args.trim() === 'preview') return { text: 'Style preview' }
-    await $.ui.open({ id: PANE, title: 'Style', focus: true, closeOnEscape: true, rows: 44, columns: 64 })
+    await $.ui.open({ id: PANE, title: 'Style', focus: true, closeOnEscape: true, rows: 54, columns: 64 })
     return { text: 'Style settings opened.' }
   })
 
@@ -450,12 +470,8 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const s = await read($, settings)
     const sample = (k: Key, v: string): RenderNode | null => {
-      if (k === 'bandFrame' && v === 'on') return <Text color={s.accent}>{BORDER_SAMPLES[borderOf(s, s.bandBorder)]}</Text>
-      if (k === 'hintDim') return <Text color={s.hintColor === 'original' ? undefined : colorOf(s, s.hintColor as Accent)} dimColor={v === 'on'}>esc to interrupt</Text>
-      if (k === 'border' || ((k === 'bandBorder' || k === 'questionFrame') && v !== 'off'))
-        return <Text color={s.accent}>{BORDER_SAMPLES[borderOf(s, v as Border)]}</Text>
-      if (k === 'accent' || (k.endsWith('Color') && k !== 'toolColor' && v !== 'original'))
-        return <Text color={colorOf(s, v as Accent)}>■■■</Text>
+      if (k === 'hintDim') return <Text color={colorOf(s, s.hintColor)} dimColor={v === 'on'}>esc to interrupt</Text>
+      if (k === 'border' || k === 'bandBorder' || k === 'questionFrame') return <Text color={s.accent}>{BORDER_SAMPLES[borderOf(s, v as Border)]}</Text>
       if (k === 'toolColor' && v !== 'mono') {
         const tint = (tool: string, running: boolean, errored: boolean) => toolColor({ ...s, toolColor: v as Settings['toolColor'] }, tool, running, errored)
         const dots: [string, ThemeKey][] = v === 'tool'
@@ -467,9 +483,27 @@ export const register: Register = on => {
       const text = SAMPLES[k]?.[v]
       return text ? <Text dimColor>{text}</Text> : null
     }
+    // A color row's value: the swatch, the legend's number and the name; inherit shows the default's swatch.
+    const color = (v: string, off: boolean) => (
+      <Text>
+        <Text color={off ? undefined : colorOf(s, v as Accent)} dimColor={off}>■ </Text>
+        <Text bold={!off} dimColor={off}>{v === 'global' ? shown(v) : `${ACCENTS.indexOf(v as Accent) + 1} ${shown(v)}`}</Text>
+      </Text>
+    )
+    const legend = ACCENTS.map((a, i) => (
+      <Text key={`color:${a}`}>
+        <Text color={a}>■ </Text>
+        <Text dimColor>{`${i + 1} `}</Text>
+        <Text>{shown(a).padEnd(13)}</Text>
+      </Text>
+    ))
     return (
       <Box flexDirection="column">
         <Text dimColor>Press a row to cycle its value. Esc closes.</Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color={s.accent}>Colors</Text>
+          {[0, 3, 6].map(i => <Text key={`colors:${i}`}>{'  '}{legend.slice(i, i + 3)}</Text>)}
+        </Box>
         {GROUPS.map(([title, about, keys], i) => (
           <Box key={`group:${i}`} flexDirection="column" marginTop={1}>
             <Text>
@@ -477,18 +511,18 @@ export const register: Register = on => {
               <Text dimColor>{`  ${about}`}</Text>
             </Text>
             {keys.map(k => {
-              const off = INACTIVE[k]?.(s) ?? false
+              const off = inactive(s, k)
               const values = OPTIONS[k].values as readonly string[]
+              const isColor = k === 'accent' || (k.endsWith('Color') && k !== 'toolColor')
               return (
                 <Button
                   key={`set:${k}`}
                   plain
-                  onPress={() => changeSettings($, x => ({ ...x, [k]: cycle(values, x[k]) }))}
+                  onPress={() => (off ? undefined : changeSettings($, x => ({ ...x, [k]: cycle(values, x[k]) })))}
                 >
                   <Text dimColor>{`  ${OPTIONS[k].label}`.padEnd(14)}</Text>
-                  <Text bold={!off} dimColor={off}>{shown(s[k]).padEnd(11)}</Text>
-                  <Text dimColor>{`${values.indexOf(s[k]) + 1}/${values.length}`.padEnd(6)}</Text>
-                  {off ? <Text dimColor>not used</Text> : sample(k, s[k])}
+                  {isColor ? color(s[k], off) : <Text bold={!off} dimColor={off}>{shown(s[k], k).padEnd(13)}</Text>}
+                  {off || isColor ? null : sample(k, s[k])}
                 </Button>
               )
             })}
@@ -512,14 +546,14 @@ export const register: Register = on => {
   // engine's own drawing is usually empty, and an empty frame is clutter.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const s = await read($, settings)
-    if (s.bandFrame === 'off') return next(e)
+    if (!ours(s, 'bands')) return next(e)
     const inner = await next({ ...e, props: { ...e.props, bodyColumns: e.props.bodyColumns - BORDER } })
     return inner.type === 'engine' ? inner : drawBand($.ui.resolve(e), s, inner)
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     if (BARE.test(e.props.tool)) return next(e)
-    return (await drawTool($.ui.resolve(e), await read($, settings), e.props, () => next(e))) ?? next(e)
+    return drawTool($.ui.resolve(e), await read($, settings), e.props) ?? next(e)
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {

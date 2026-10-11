@@ -36,7 +36,7 @@ async function configure($: Engine, change: Partial<StyleSettings>) {
   for (const [k, v] of Object.entries(change)) {
     for (let i = 0; i < 12; i++) {
       const row = await pane.find({ key: `set:${k}` })
-      if (new RegExp(`\\s${shown(String(v))}\\s`).test(row?.text ?? '')) break
+      if (new RegExp(`\\s${shown(String(v), k as keyof StyleSettings)}(\\s|$)`).test(row?.text ?? '')) break
       await pane.press({ key: `set:${k}` })
     }
   }
@@ -56,6 +56,8 @@ test('loads settings over the defaults, per key, ignoring garbage', () => {
     border: 'double',
     toolStyle: 'card',
   })
+  // Earlier versions turned a site off in its style row: read as handing it to Claude Code.
+  expect(loadSettings({ toolStyle: 'off', hintColor: 'original', bandFrame: 'off' })).toEqual({ ...DEFAULTS, tools: 'claude', hint: 'claude', bands: 'claude' })
 })
 
 test('helpers: durations, rules, call targets, result text, tool colors', () => {
@@ -133,7 +135,7 @@ const userMessage = (surface: RenderSurface) =>
     props: { text: 'hi there', origin: { kind: 'composer' }, isExpanded: true },
   }) as const
 
-test('your prompts: bubble, bar, plain and off', async ($, on) => {
+test('your prompts: bubble, bar, plain, or Claude Code\'s', async ($, on) => {
   memoryStore(on)
   engineBeneath(on)
   for (const surface of SURFACES) {
@@ -151,7 +153,7 @@ test('your prompts: bubble, bar, plain and off', async ($, on) => {
   await configure($, { promptStyle: 'plain' })
   const plain = await $.ui.mount(userMessage('terminal'))
   expect(await plain.find({ type: 'Text', text: '❯ ' })).toMatchObject({ props: { color: 'claude' } })
-  await configure($, { promptStyle: 'off' })
+  await configure($, { prompts: 'claude' })
   const off = await $.ui.mount(userMessage('terminal'))
   expect(await off.drawn()).toMatchObject(ENGINE)
 })
@@ -183,7 +185,7 @@ test('the band: framed only when a plugin drew there, which is told the narrower
   }
   await configure($, { bandBorder: 'double' })
   expect(await (await $.ui.mount(band('terminal', false))).drawn()).toMatchObject({ props: { borderStyle: 'double' } })
-  await configure($, { bandFrame: 'off' })
+  await configure($, { bands: 'claude' })
   expect(await (await $.ui.mount(band('terminal', false))).drawn()).toMatchObject({ type: 'Text' })
 })
 
@@ -195,13 +197,14 @@ const toolUse = (surface: RenderSurface, tool: string, extra: object = {}) =>
     props: { tool_use_id: 't1', tool, input: { command: 'ls -la' }, isRunning: false, isErrored: false, isInterrupted: false, ...extra },
   }) as const
 
-test('tool rows: rail, card, compact and off; colored by tool, status or mono', async ($, on) => {
+test("tool rows: our own Tool(target) line, no dot, by rail, card or compact; or Claude Code's", async ($, on) => {
   memoryStore(on)
   engineBeneath(on)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(toolUse(surface, 'Bash'))
     expect(await ui.find({ type: 'Text', text: /^▎/ })).toMatchObject({ props: { color: 'bashBorder' } })
-    expect(JSON.stringify(await ui.drawn())).toContain('"engine"')
+    expect(await ui.find({ type: 'Text', text: /^Bash\(ls -la\)$/ })).toBeDefined()
+    expect(JSON.stringify(await ui.drawn())).not.toMatch(/engine|⏺|●/)
     await ui.unmount()
   }
   await configure($, { toolStyle: 'card', toolColor: 'status' })
@@ -216,11 +219,12 @@ test('tool rows: rail, card, compact and off; colored by tool, status or mono', 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(toolUse(surface, 'Bash'))
     expect(await texts(ui)).toContain('ls -la')
-    expect(await ui.find({ type: 'Text', text: /^● $/ })).toMatchObject({ props: { color: DEFAULTS.accent } })
+    expect(await ui.find({ type: 'Text', text: /^Bash$/ })).toMatchObject({ props: { color: DEFAULTS.accent } })
     await ui.unmount()
   }
-  await configure($, { toolStyle: 'off' })
+  await configure($, { tools: 'claude' })
   expect(await (await $.ui.mount(toolUse('terminal', 'Bash'))).drawn()).toMatchObject(ENGINE)
+  expect(await (await $.ui.mount(toolResult('terminal', 'x'))).drawn()).toMatchObject(ENGINE)
 })
 
 const toolResult = (surface: RenderSurface, output: unknown, isErrored = false) =>
@@ -249,7 +253,7 @@ test('tool results: full beside the rail, a summary of the first line, or hidden
     expect(shown).not.toContain('three')
     await ui.unmount()
   }
-  await configure($, { toolResult: 'hidden', toolStyle: 'off' })
+  await configure($, { toolResult: 'hidden', toolStyle: 'compact' })
   for (const surface of SURFACES) {
     const hidden = await (await $.ui.mount(toolResult(surface, OUT))).drawn()
     expect(hidden).toMatchObject({ type: 'Box' })
@@ -268,7 +272,7 @@ test('info notices: a dim line in the color, a card, or the engine', async ($, o
   expect(await line.find({ type: 'Text', text: /^ \/model$/ })).toBeDefined()
   await configure($, { noticeStyle: 'card', noticeColor: 'ide' })
   expect(await (await $.ui.mount(notice)).drawn()).toMatchObject({ type: 'Box', props: { borderStyle: 'round', borderColor: 'ide' } })
-  await configure($, { noticeStyle: 'off' })
+  await configure($, { notices: 'claude' })
   expect(await (await $.ui.mount(notice)).drawn()).toMatchObject(ENGINE)
 })
 
@@ -286,19 +290,19 @@ test('the mode footer: pills, brackets, plain; no modes is the engine', async ($
   expect(await texts(await $.ui.mount(footer('desktop', ['focus'])))).toContain('[focus]')
   await configure($, { modeStyle: 'plain' })
   expect(await texts(await $.ui.mount(footer('terminal', ['a', 'b'])))).toContain(' · ')
-  await configure($, { modeStyle: 'off' })
+  await configure($, { mode: 'claude' })
   expect(await (await $.ui.mount(footer('terminal', ['a']))).drawn()).toMatchObject(ENGINE)
 })
 
-test('the prompt hint: dim in the accent by default, recolored on request, the engine when unchanged', async ($, on) => {
+test('the prompt hint: dim in the accent by default, recolored on request, Claude Code\'s when handed back', async ($, on) => {
   memoryStore(on)
   engineBeneath(on)
   const hint = (surface: RenderSurface) =>
     ({ plugin: 'style', surface, component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } }) as const
   expect(await (await $.ui.mount(hint('terminal'))).drawn()).toMatchObject({ type: 'Text', props: { color: DEFAULTS.accent, dimColor: true } })
-  await configure($, { hintColor: 'original' })
+  await configure($, { hint: 'claude' })
   expect(await (await $.ui.mount(hint('terminal'))).drawn()).toMatchObject(ENGINE)
-  await configure($, { hintColor: 'suggestion', hintDim: 'off' })
+  await configure($, { hint: 'style', hintColor: 'suggestion', hintDim: 'off' })
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(hint(surface))
     expect(await ui.drawn()).toMatchObject({ type: 'Text', props: { color: 'suggestion', dimColor: false } })
@@ -326,7 +330,7 @@ test("the question dialog: the engine's own under a tab", async ($, on) => {
   }
   await configure($, { questionFrame: 'double' })
   expect(await (await $.ui.mount(dialog('terminal'))).find({ type: 'Text', text: '╔═ Question ═╗' })).toBeDefined()
-  await configure($, { questionFrame: 'off' })
+  await configure($, { questions: 'claude' })
   expect(await (await $.ui.mount(dialog('terminal'))).drawn()).toMatchObject(ENGINE)
 })
 
@@ -338,9 +342,9 @@ test('turn duration: a rule across the width, compact, the engine, or nothing', 
   expect(await (await $.ui.mount(line)).find({ type: 'Text', text: rule('Baked 1m 4s', 38) })).toBeDefined()
   await configure($, { durationStyle: 'compact', durationVerb: 'off' })
   expect(await (await $.ui.mount(line)).find({ type: 'Text', text: '✻ 1m 4s' })).toBeDefined()
-  await configure($, { durationStyle: 'original' })
+  await configure($, { turnTime: 'claude' })
   expect(await (await $.ui.mount(line)).drawn()).toMatchObject(ENGINE)
-  await configure($, { durationStyle: 'hidden' })
+  await configure($, { turnTime: 'style', durationStyle: 'hidden' })
   expect(await (await $.ui.mount(line)).find({ type: 'Text' })).toBeUndefined()
 })
 
@@ -369,10 +373,24 @@ test('Preview runs /style preview, whose row shows every site labeled, as the si
     await ui.unmount()
   }
   // Sites left to the engine show a stand-in, and the row follows the settings.
-  await configure($, { promptStyle: 'off', durationStyle: 'compact' })
+  await configure($, { prompts: 'claude', durationStyle: 'compact' })
   const shown = await texts(await $.ui.mount(row('terminal')))
   expect(shown).toContain('❯ fix the login bug')
   expect(shown).toContain('✻ Baked 3s')
   // Another command's output is the engine's.
   expect(await (await $.ui.mount({ ...row('terminal'), props: { ...row('terminal').props, args: '' } })).drawn()).toMatchObject(ENGINE)
+})
+
+test("a site handed to Claude Code dims its other rows, which then ignore presses", async ($, on) => {
+  const saved = memoryStore(on)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await texts(pane)).toContain('9 plan mode')
+  await pane.press({ key: 'set:tools' })
+  expect((await pane.find({ key: 'set:tools' }))?.text).toContain('Claude Code')
+  await pane.press({ key: 'set:toolStyle' })
+  expect(saved.settings).toMatchObject({ tools: 'claude', toolStyle: DEFAULTS.toolStyle })
+  await pane.press({ key: 'set:tools' })
+  await pane.press({ key: 'set:toolStyle' })
+  expect(saved.settings).not.toMatchObject({ toolStyle: DEFAULTS.toolStyle })
+  await pane.unmount()
 })

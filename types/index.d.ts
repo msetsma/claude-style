@@ -13,27 +13,36 @@ export type Accent =
 // A per-site setting that says 'global' takes the global border or accent.
 export type SiteBorder = 'global' | Border
 export type SiteColor = 'global' | Accent
+// Who draws a site: this mod, in the settings below it, or Claude Code as it would without the mod.
+export type DrawnBy = 'style' | 'claude'
 
 export type Settings = {
   border: Border
   accent: Accent
   density: 'compact' | 'normal' | 'roomy'
-  promptStyle: 'bubble' | 'bar' | 'plain' | 'off'
+  prompts: DrawnBy
+  promptStyle: 'bubble' | 'bar' | 'plain'
   promptColor: SiteColor
-  bandFrame: 'on' | 'off'
+  bands: DrawnBy
   bandBorder: SiteBorder
-  toolStyle: 'card' | 'rail' | 'compact' | 'off'
+  tools: DrawnBy
+  toolStyle: 'card' | 'rail' | 'compact'
   toolColor: 'tool' | 'status' | 'mono'
   toolResult: 'full' | 'summary' | 'hidden'
-  noticeStyle: 'card' | 'line' | 'off'
+  notices: DrawnBy
+  noticeStyle: 'card' | 'line'
   noticeColor: SiteColor
-  modeStyle: 'pills' | 'brackets' | 'plain' | 'off'
+  mode: DrawnBy
+  modeStyle: 'pills' | 'brackets' | 'plain'
   modeColor: SiteColor
-  hintColor: 'original' | SiteColor
+  hint: DrawnBy
+  hintColor: SiteColor
   hintDim: 'on' | 'off'
-  questionFrame: 'off' | SiteBorder
+  questions: DrawnBy
+  questionFrame: SiteBorder
   questionColor: SiteColor
-  durationStyle: 'rule' | 'compact' | 'original' | 'hidden'
+  turnTime: DrawnBy
+  durationStyle: 'rule' | 'compact' | 'hidden'
   durationVerb: 'on' | 'off'
 }
 // Inside the block below `Settings` names claude-code's own type, so refer to ours by another name.

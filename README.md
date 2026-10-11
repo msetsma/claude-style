@@ -8,17 +8,23 @@ Claude Code's UI, and `/style` opens a pane where each part is set:
 | Part | Options |
 |---|---|
 | Defaults | border (round, single, double, bold, dashed, classic), color, spacing (compact, normal, roomy) |
-| Your prompts | bubble, bar, plain or off; color |
-| Plugin bands (rows other mods draw above the prompt) | frame on or off; border |
-| Tool calls | rail, card, compact or off; colored by tool, status or one color; output full, summarized or hidden (errors always show) |
-| Notices | line, card or off; color |
-| Mode badge | pills, brackets, plain or off; color |
+| Your prompts | bubble, bar or plain; color |
+| Plugin bands (rows other mods draw above the prompt) | a frame in a border |
+| Tool calls | rail, card or compact, each a `Tool(target)` line without Claude Code's dot; colored by tool, status or one color; output full, summarized or hidden (errors always show) |
+| Notices | line or card; color |
+| Mode badge | pills, brackets or plain; color |
 | Prompt hint | color, dimmed |
-| Questions | a tab over the dialog in a border and color, or off |
-| Turn time | a rule across the width, compact, unchanged or hidden; with or without the verb |
+| Questions | a tab over the dialog in a border and color |
+| Turn time | a rule across the width, compact or hidden; with or without the verb |
 
-Press a row to cycle its value. A row that does nothing in the current state is
-dimmed. Settings persist across sessions.
+Every part except Defaults has a Drawn by row: `style` draws it as set, `Claude Code`
+leaves it as Claude Code draws it and dims the part's other rows, which then ignore
+presses. The pane opens with the theme's colors, numbered, and color rows name
+their color by that number.
+
+Press a row to cycle its value. Preview, or `/style preview`, prints a labeled
+sample of every part into the transcript, drawn by the same code as the parts
+themselves. Settings persist across sessions.
 
 Colors are theme keys (`permission`, `planMode`, `promptBorder`, ...), so
 everything draws in the colors of your Claude Code theme, custom themes
