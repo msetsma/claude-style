@@ -117,7 +117,7 @@ test('a press cycles a setting, saves it and redraws the site; Reset restores th
 test('the pane groups one row per option, with samples', async $ => {
   for (const surface of SURFACES) {
     const pane = await $.ui.mount({ ...PANE, surface })
-    expect(await pane.findAll({ type: 'Button' })).toHaveLength(Object.keys(DEFAULTS).length + 2)
+    expect(await pane.findAll({ type: 'Button' })).toHaveLength(Object.keys(DEFAULTS).length + 3)
     const shown = await texts(pane)
     for (const title of ['Defaults', 'Tool calls', 'Turn time']) expect(shown).toContain(title)
     expect((await pane.find({ key: 'set:durationStyle' }))?.text).toContain('── Baked 3s ──')
@@ -290,11 +290,13 @@ test('the mode footer: pills, brackets, plain; no modes is the engine', async ($
   expect(await (await $.ui.mount(footer('terminal', ['a']))).drawn()).toMatchObject(ENGINE)
 })
 
-test('the prompt hint: the engine by default, recolored on request, its text kept', async ($, on) => {
+test('the prompt hint: dim in the accent by default, recolored on request, the engine when unchanged', async ($, on) => {
   memoryStore(on)
   engineBeneath(on)
   const hint = (surface: RenderSurface) =>
     ({ plugin: 'style', surface, component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } }) as const
+  expect(await (await $.ui.mount(hint('terminal'))).drawn()).toMatchObject({ type: 'Text', props: { color: DEFAULTS.accent, dimColor: true } })
+  await configure($, { hintColor: 'original' })
   expect(await (await $.ui.mount(hint('terminal'))).drawn()).toMatchObject(ENGINE)
   await configure($, { hintColor: 'suggestion', hintDim: 'off' })
   for (const surface of SURFACES) {
@@ -340,4 +342,37 @@ test('turn duration: a rule across the width, compact, the engine, or nothing', 
   expect(await (await $.ui.mount(line)).drawn()).toMatchObject(ENGINE)
   await configure($, { durationStyle: 'hidden' })
   expect(await (await $.ui.mount(line)).find({ type: 'Text' })).toBeUndefined()
+})
+
+test('Preview runs /style preview, whose row shows every site labeled, as the sites draw it', async ($, on) => {
+  memoryStore(on)
+  engineBeneath(on)
+  const runs: unknown[] = []
+  on('command.run', ($, e) => {
+    runs.push({ command: e.command, args: e.args })
+    return { text: '' }
+  })
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'preview' })
+  expect(runs).toEqual([{ command: 'style', args: 'preview' }])
+  await pane.unmount()
+
+  const row = (surface: RenderSurface) =>
+    ({ plugin: 'style', surface, component: 'CommandOutput', props: { command: 'style', args: 'preview', text: 'Style preview', isErrored: false } }) as const
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount(row(surface))
+    const shown = await texts(ui)
+    for (const title of ['Your prompts', 'Plugin bands', 'Tool calls', 'Notices', 'Mode badge', 'Prompt hint', 'Questions', 'Turn time'])
+      expect(shown).toContain(title)
+    expect(await ui.find({ type: 'Box', props: { borderColor: DEFAULTS.promptColor } })).toBeDefined()
+    expect(shown).toContain('── Baked 3s ──')
+    await ui.unmount()
+  }
+  // Sites left to the engine show a stand-in, and the row follows the settings.
+  await configure($, { promptStyle: 'off', durationStyle: 'compact' })
+  const shown = await texts(await $.ui.mount(row('terminal')))
+  expect(shown).toContain('❯ fix the login bug')
+  expect(shown).toContain('✻ Baked 3s')
+  // Another command's output is the engine's.
+  expect(await (await $.ui.mount({ ...row('terminal'), props: { ...row('terminal').props, args: '' } })).drawn()).toMatchObject(ENGINE)
 })
