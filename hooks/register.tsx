@@ -16,10 +16,10 @@ const SITE_COLORS = ['global', ...ACCENTS] as const
 
 export const DEFAULTS: Settings = {
   border: 'round',
-  accent: 'subtle',
+  accent: 'claude',
   density: 'normal',
   promptStyle: 'bubble',
-  promptColor: 'promptBorder',
+  promptColor: 'suggestion',
   bandFrame: 'on',
   bandBorder: 'global',
   toolStyle: 'rail',
@@ -29,7 +29,7 @@ export const DEFAULTS: Settings = {
   noticeColor: 'global',
   modeStyle: 'pills',
   modeColor: 'planMode',
-  hintColor: 'original',
+  hintColor: 'global',
   hintDim: 'on',
   questionFrame: 'global',
   questionColor: 'permission',
@@ -219,15 +219,228 @@ function railed({ Box, Text }: Pick<Elements[RenderSurface], 'Box' | 'Text'>, co
   )
 }
 
+type Els = Elements[RenderSurface]
+// What the engine draws at a site, produced only when asked for.
+type Inner = () => Promise<RenderElement>
+
+// Your own prompts: a rounded bubble sized to the text, a colored rail, or a plain colored ❯.
+function drawPrompt(els: Els, s: Settings, text: string) {
+  if (s.promptStyle === 'off') return undefined
+  const { Box, Text } = els
+  const color = colorOf(s, s.promptColor)
+  const { padX, marginTop } = SPACING[s.density]
+  if (s.promptStyle === 'bar') return <Box marginTop={marginTop}>{railed(els, color, '▎', <Text>{text}</Text>)}</Box>
+  if (s.promptStyle === 'plain')
+    return (
+      <Box marginTop={marginTop}>
+        <Text color={color}>❯ </Text>
+        <Text>{text}</Text>
+      </Box>
+    )
+  return (
+    <Box borderStyle={s.border} borderColor={color} paddingX={padX} marginTop={marginTop} alignSelf="flex-start">
+      <Text color={color}>❯ </Text>
+      <Text>{text}</Text>
+    </Box>
+  )
+}
+
+// A frame around what other plugins drew above the prompt.
+function drawBand({ Box }: Els, s: Settings, inner: RenderElement) {
+  return (
+    <Box borderStyle={borderOf(s, s.bandBorder)} borderColor={s.accent} flexDirection="column">
+      {inner}
+    </Box>
+  )
+}
+
+// A tool call's row: the engine's drawing in a card or beside a rail, or one line of our own.
+async function drawTool(els: Els, s: Settings, call: { tool: string; input: unknown; isRunning: boolean; isErrored: boolean }, inner: Inner) {
+  if (s.toolStyle === 'off') return undefined
+  const { Box, Text } = els
+  const color = toolColor(s, call.tool, call.isRunning, call.isErrored)
+  if (s.toolStyle === 'compact')
+    return (
+      <Box marginTop={SPACING[s.density].marginTop}>
+        <Text wrap="truncate">
+          <Text color={color}>● </Text>
+          <Text bold>{call.tool.replace(/^mcp__/, '')}</Text>
+          <Text dimColor> {target(call.input)}</Text>
+        </Text>
+      </Box>
+    )
+  // The engine's row opens with a blank line: the rail starts below it, the card pulls it under its
+  // top border and keeps the density's own gap above.
+  if (s.toolStyle === 'rail') return railed(els, color, '▎', await inner(), 1)
+  const { padX, marginTop } = SPACING[s.density]
+  return (
+    <Box borderStyle={s.border} borderColor={color} paddingX={padX} marginTop={marginTop} flexDirection="column">
+      <Box marginTop={-1} flexDirection="column">
+        {await inner()}
+      </Box>
+    </Box>
+  )
+}
+
+// A tool's result: the engine's drawing (beside the call's rail), its first line, or nothing.
+// An error always shows whole.
+async function drawResult(els: Els, s: Settings, result: { tool: string; output: unknown; isErrored: boolean }, inner: Inner) {
+  const { Box, Text } = els
+  const glyph = s.toolStyle === 'rail' ? '▎' : s.toolStyle === 'card' ? '┆' : undefined
+  const beside = (body: RenderElement) => (glyph ? railed(els, toolColor(s, result.tool, false, result.isErrored), glyph, body) : body)
+  const text = outputText(result.output)
+  if (s.toolResult === 'hidden' && !result.isErrored) return <Box />
+  if (s.toolResult === 'summary' && !result.isErrored && text !== undefined) {
+    const lines = text.trimEnd().split('\n')
+    return beside(
+      <Box flexDirection="column" paddingLeft={glyph ? 0 : 2}>
+        <Text dimColor wrap="truncate">⎿  {lines[0] || '(no output)'}</Text>
+        {lines.length > 1 ? <Text dimColor>   … +{lines.length - 1} lines</Text> : null}
+      </Box>,
+    )
+  }
+  return glyph ? beside(await inner()) : inner()
+}
+
+// The dim notices under the logo, after the engine's own `▎` mark: a card, or a dim line in the color.
+function drawNotice({ Box, Text }: Els, s: Settings, text: string, command: string | null) {
+  if (s.noticeStyle === 'off') return undefined
+  const color = colorOf(s, s.noticeColor)
+  const line = s.noticeStyle === 'line'
+  const body = (
+    <Text>
+      <Text color={line ? color : undefined} dimColor>{text}</Text>
+      {command ? <Text color={color} bold={line}> {command}</Text> : null}
+    </Text>
+  )
+  if (line) return body
+  return (
+    <Box borderStyle={s.border} borderColor={color} paddingX={SPACING[s.density].padX} alignSelf="flex-start">
+      {body}
+    </Box>
+  )
+}
+
+// The mode labels at the right of the footer, as pills, in brackets or plain.
+function drawMode({ Text }: Els, s: Settings, modes: readonly string[]) {
+  if (s.modeStyle === 'off') return undefined
+  const color = colorOf(s, s.modeColor)
+  const label = (m: string) =>
+    s.modeStyle === 'pills' ? <Text inverse color={color}> {m} </Text> : <Text color={color}>{s.modeStyle === 'brackets' ? `[${m}]` : m}</Text>
+  const gap = <Text dimColor>{s.modeStyle === 'plain' ? ' · ' : ' '}</Text>
+  return <Text>{modes.flatMap((m, i) => (i ? [gap, label(m)] : [label(m)]))}</Text>
+}
+
+// The hint under the prompt, recolored; its text is the engine's.
+function drawHint({ Text }: Els, s: Settings, hint: string, tail?: string | null) {
+  if (s.hintColor === 'original') return undefined
+  return (
+    <Text color={colorOf(s, s.hintColor)} dimColor={s.hintDim === 'on'} wrap="truncate">
+      {hint}
+      {tail ? ` ${tail}` : ''}
+    </Text>
+  )
+}
+
+// The AskUserQuestion dialog, the engine's own and still live, under a tab in the frame's border
+// and color that sits on the dialog's top divider. Only a tab above: the engine refuses a tree that
+// draws below the dialog, and a border's side columns would wrap the dividers it draws full width.
+async function drawQuestion({ Box, Text }: Els, s: Settings, inner: Inner) {
+  if (s.questionFrame === 'off') return undefined
+  const [left, line, right] = BORDER_SAMPLES[borderOf(s, s.questionFrame)]
+  return (
+    <Box flexDirection="column" marginTop={SPACING[s.density].marginTop}>
+      <Text color={colorOf(s, s.questionColor)}>{`${left}${line} Question ${line}${right}`}</Text>
+      {await inner()}
+    </Box>
+  )
+}
+
+// The line that closes a turn: a dim rule across the width, a short `✻ 3s`, or nothing.
+function drawDuration({ Box, Text }: Els, s: Settings, word: string, ms: number, columns: number) {
+  if (s.durationStyle === 'original') return undefined
+  if (s.durationStyle === 'hidden') return <Box />
+  const label = s.durationVerb === 'on' ? `${word} ${duration(ms)}` : duration(ms)
+  const { marginTop } = SPACING[s.density]
+  if (s.durationStyle === 'compact')
+    return (
+      <Box marginTop={marginTop}>
+        <Text dimColor>✻ {label}</Text>
+      </Box>
+    )
+  return (
+    <Box marginTop={marginTop}>
+      <Text color={s.accent} dimColor wrap="truncate">
+        {rule(label, columns - 2)}
+      </Text>
+    </Box>
+  )
+}
+
+// One labeled sample per site, the engine's part of each played by a dim stand-in.
+async function drawPreview(els: Els, s: Settings, columns: number) {
+  const { Box, Text } = els
+  const plain = (text: string) => <Text dimColor>{text}</Text>
+  // The engine's tool row opens with a blank line, as the rail and card expect.
+  const call = (tool: string, input: Record<string, string>, isErrored = false) => {
+    const row = async () => (
+      <Box marginTop={1}>
+        <Text>
+          ⏺ <Text bold>{tool}</Text>({Object.values(input)[0]})
+        </Text>
+      </Box>
+    )
+    return drawTool(els, s, { tool, input, isRunning: false, isErrored }, row).then(r => r ?? row())
+  }
+  const result = (tool: string, output: string, isErrored = false) =>
+    drawResult(els, s, { tool, output, isErrored }, async () => <Text color={isErrored ? 'error' : undefined}>{`  ⎿  ${output.replace(/\n/g, '\n     ')}`}</Text>)
+  const question = async () => <Text>Which approach should I take?</Text>
+  const sites: [string, string, RenderNode][] = [
+    ['Your prompts', shown(s.promptStyle), drawPrompt(els, s, 'fix the login bug') ?? plain('❯ fix the login bug')],
+    ['Plugin bands', s.bandFrame === 'off' ? 'off' : shown(borderOf(s, s.bandBorder)), s.bandFrame === 'off' ? plain('a row another mod draws') : drawBand(els, s, <Text>a row another mod draws</Text>)],
+    [
+      'Tool calls',
+      `${shown(s.toolStyle)}, by ${shown(s.toolColor)}, output ${shown(s.toolResult)}`,
+      <Box flexDirection="column">
+        {await call('Bash', { command: 'npm test' })}
+        {await result('Bash', '14 pass\n0 fail\nRan 14 tests')}
+        {await call('Edit', { file_path: 'src/login.ts' })}
+        {await result('Edit', 'Updated src/login.ts')}
+        {await call('Read', { file_path: 'missing.ts' }, true)}
+        {await result('Read', 'File does not exist.', true)}
+      </Box>,
+    ],
+    ['Notices', shown(s.noticeStyle), drawNotice(els, s, 'Model from settings', '/model') ?? plain('Model from settings /model')],
+    ['Mode badge', shown(s.modeStyle), drawMode(els, s, ['plan', 'auto']) ?? plain('plan & auto')],
+    ['Prompt hint', shown(s.hintColor), drawHint(els, s, '? for shortcuts') ?? plain('? for shortcuts')],
+    ['Questions', shown(s.questionFrame), (await drawQuestion(els, s, question)) ?? (await question())],
+    ['Turn time', shown(s.durationStyle), drawDuration(els, s, 'Baked', 3000, columns) ?? plain('✻ Baked for 3s')],
+  ]
+  return (
+    <Box flexDirection="column">
+      {sites.map(([title, value, sample], i) => (
+        <Box key={`preview:${i}`} flexDirection="column" marginTop={i ? 1 : 0}>
+          <Text>
+            <Text bold color={s.accent}>{title}</Text>
+            <Text dimColor>{`  ${value}`}</Text>
+          </Text>
+          {sample}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'style', description: 'Style settings: borders, colors and styles' })
+    await $.command.register({ name: 'style', description: 'Style settings: borders, colors and styles; /style preview shows each' })
     const saved = loadSettings(await $.store.get('settings'))
     await update($, settings, () => saved)
     return next(e)
   })
 
-  on('command.run', { command: 'style' }, async $ => {
+  on('command.run', { command: 'style' }, async ($, e) => {
+    if (e.args.trim() === 'preview') return { text: 'Style preview' }
     await $.ui.open({ id: PANE, title: 'Style', focus: true, closeOnEscape: true, rows: 44, columns: 64 })
     return { text: 'Style settings opened.' }
   })
@@ -283,34 +496,16 @@ export const register: Register = on => {
         ))}
         <Box marginTop={1} gap={1}>
           <Button key="reset" label="Reset" onPress={() => changeSettings($, () => DEFAULTS)} />
+          <Button key="preview" label="Preview" onPress={() => $.command.run({ command: 'style', args: 'preview' })} />
           <Button key="close" label="Close" onPress={() => $.ui.close({ id: PANE })} />
         </Box>
       </Box>
     )
   })
 
-  // Your own prompts: a rounded bubble sized to the text, a colored rail, or a plain colored ❯.
+  // Each site: the engine's drawing when the site is left to it, else ours.
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'composer' } } }, async ($, e, next) => {
-    const s = await read($, settings)
-    if (s.promptStyle === 'off') return next(e)
-    const { Box, Text } = $.ui.resolve(e)
-    const color = colorOf(s, s.promptColor)
-    const { padX, marginTop } = SPACING[s.density]
-    if (s.promptStyle === 'bar')
-      return <Box marginTop={marginTop}>{railed($.ui.resolve(e), color, '▎', <Text>{e.props.text}</Text>)}</Box>
-    if (s.promptStyle === 'plain')
-      return (
-        <Box marginTop={marginTop}>
-          <Text color={color}>❯ </Text>
-          <Text>{e.props.text}</Text>
-        </Box>
-      )
-    return (
-      <Box borderStyle={s.border} borderColor={color} paddingX={padX} marginTop={marginTop} alignSelf="flex-start">
-        <Text color={color}>❯ </Text>
-        <Text>{e.props.text}</Text>
-      </Box>
-    )
+    return drawPrompt($.ui.resolve(e), await read($, settings), e.props.text) ?? next(e)
   }).catch(($, e, next) => next(e))
 
   // The band above the prompt, only when a plugin drew something there: the
@@ -319,151 +514,44 @@ export const register: Register = on => {
     const s = await read($, settings)
     if (s.bandFrame === 'off') return next(e)
     const inner = await next({ ...e, props: { ...e.props, bodyColumns: e.props.bodyColumns - BORDER } })
-    if (inner.type === 'engine') return inner
-    const { Box } = $.ui.resolve(e)
-    return (
-      <Box borderStyle={borderOf(s, s.bandBorder)} borderColor={s.accent} flexDirection="column">
-        {inner}
-      </Box>
-    )
+    return inner.type === 'engine' ? inner : drawBand($.ui.resolve(e), s, inner)
   }).catch(($, e, next) => next(e))
 
-  // A tool call's row: the engine's drawing in a card or beside a rail, or one line of our own.
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
-    const s = await read($, settings)
-    if (s.toolStyle === 'off' || BARE.test(e.props.tool)) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
-    const { tool, isRunning, isErrored } = e.props
-    const color = toolColor(s, tool, isRunning, isErrored)
-    if (s.toolStyle === 'compact')
-      return (
-        <Box marginTop={SPACING[s.density].marginTop}>
-          <Text wrap="truncate">
-            <Text color={color}>● </Text>
-            <Text bold>{tool.replace(/^mcp__/, '')}</Text>
-            <Text dimColor> {target(e.props.input)}</Text>
-          </Text>
-        </Box>
-      )
-    const inner = await next(e)
-    // The engine's row opens with a blank line: the rail starts below it, the card pulls it under its
-    // top border and keeps the density's own gap above.
-    if (s.toolStyle === 'rail') return railed($.ui.resolve(e), color, '▎', inner, 1)
-    const { padX, marginTop } = SPACING[s.density]
-    return (
-      <Box borderStyle={s.border} borderColor={color} paddingX={padX} marginTop={marginTop} flexDirection="column">
-        <Box marginTop={-1} flexDirection="column">
-          {inner}
-        </Box>
-      </Box>
-    )
-  }).catch(($, e, next) => next(e))
-
-  // A tool's result: the engine's drawing (beside the call's rail), its first line, or nothing.
-  // An error always shows whole.
-  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
-    const s = await read($, settings)
     if (BARE.test(e.props.tool)) return next(e)
-    const els = $.ui.resolve(e)
-    const { Box, Text } = els
-    const glyph = s.toolStyle === 'rail' ? '▎' : s.toolStyle === 'card' ? '┆' : undefined
-    const beside = (body: RenderElement) => (glyph ? railed(els, toolColor(s, e.props.tool, false, e.props.isErrored), glyph, body) : body)
-    const text = outputText(e.props.output)
-    if (s.toolResult === 'hidden' && !e.props.isErrored) return <Box />
-    if (s.toolResult === 'summary' && !e.props.isErrored && text !== undefined) {
-      const lines = text.trimEnd().split('\n')
-      return beside(
-        <Box flexDirection="column" paddingLeft={glyph ? 0 : 2}>
-          <Text dimColor wrap="truncate">⎿  {lines[0] || '(no output)'}</Text>
-          {lines.length > 1 ? <Text dimColor>   … +{lines.length - 1} lines</Text> : null}
-        </Box>,
-      )
-    }
-    return glyph ? beside(await next(e)) : next(e)
+    return (await drawTool($.ui.resolve(e), await read($, settings), e.props, () => next(e))) ?? next(e)
   }).catch(($, e, next) => next(e))
 
-  // The dim notices under the logo, after the engine's own `▎` mark: a card, or a dim line in the color.
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    if (BARE.test(e.props.tool)) return next(e)
+    return drawResult($.ui.resolve(e), await read($, settings), e.props, () => next(e))
+  }).catch(($, e, next) => next(e))
+
   on('ui.render', { component: 'InfoNotice' }, async ($, e, next) => {
-    const s = await read($, settings)
-    if (s.noticeStyle === 'off') return next(e)
-    const { Box, Text } = $.ui.resolve(e)
-    const color = colorOf(s, s.noticeColor)
-    const line = s.noticeStyle === 'line'
-    const body = (
-      <Text>
-        <Text color={line ? color : undefined} dimColor>{e.props.text}</Text>
-        {e.props.command ? <Text color={color} bold={line}> {e.props.command}</Text> : null}
-      </Text>
-    )
-    if (line) return body
-    return (
-      <Box borderStyle={s.border} borderColor={color} paddingX={SPACING[s.density].padX} alignSelf="flex-start">
-        {body}
-      </Box>
-    )
+    return drawNotice($.ui.resolve(e), await read($, settings), e.props.text, e.props.command) ?? next(e)
   }).catch(($, e, next) => next(e))
 
-  // The mode labels at the right of the footer, as pills, in brackets or plain.
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const s = await read($, settings)
-    if (s.modeStyle === 'off' || e.props.modes.length === 0) return next(e)
-    const { Text } = $.ui.resolve(e)
-    const color = colorOf(s, s.modeColor)
-    const label = (m: string) =>
-      s.modeStyle === 'pills' ? <Text inverse color={color}> {m} </Text> : <Text color={color}>{s.modeStyle === 'brackets' ? `[${m}]` : m}</Text>
-    const gap = <Text dimColor>{s.modeStyle === 'plain' ? ' · ' : ' '}</Text>
-    return <Text>{e.props.modes.flatMap((m, i) => (i ? [gap, label(m)] : [label(m)]))}</Text>
+    if (e.props.modes.length === 0) return next(e)
+    return drawMode($.ui.resolve(e), await read($, settings), e.props.modes) ?? next(e)
   }).catch(($, e, next) => next(e))
 
-  // The hint under the prompt, recolored; its text is the engine's.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    const s = await read($, settings)
-    if (s.hintColor === 'original') return next(e)
-    const { Text } = $.ui.resolve(e)
-    return (
-      <Text color={colorOf(s, s.hintColor)} dimColor={s.hintDim === 'on'} wrap="truncate">
-        {e.props.hint}
-        {e.props.tail ? ` ${e.props.tail}` : ''}
-      </Text>
-    )
+    return drawHint($.ui.resolve(e), await read($, settings), e.props.hint, e.props.tail) ?? next(e)
   }).catch(($, e, next) => next(e))
 
-  // The AskUserQuestion dialog, the engine's own and still live, under a tab in the frame's border
-  // and color that sits on the dialog's top divider. Only a tab above: the engine refuses a tree that
-  // draws below the dialog, and a border's side columns would wrap the dividers it draws full width.
   on('ui.render', { component: 'AskUserQuestion' }, async ($, e, next) => {
-    const s = await read($, settings)
-    if (s.questionFrame === 'off') return next(e)
-    const { Box, Text } = $.ui.resolve(e)
-    const [left, line, right] = BORDER_SAMPLES[borderOf(s, s.questionFrame)]
-    return (
-      <Box flexDirection="column" marginTop={SPACING[s.density].marginTop}>
-        <Text color={colorOf(s, s.questionColor)}>{`${left}${line} Question ${line}${right}`}</Text>
-        {await next(e)}
-      </Box>
-    )
+    return (await drawQuestion($.ui.resolve(e), await read($, settings), () => next(e))) ?? next(e)
   }).catch(($, e, next) => next(e))
 
-  // The line that closes a turn: a dim rule across the width, a short `✻ 3s`, or nothing.
   on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
-    const s = await read($, settings)
-    if (s.durationStyle === 'original') return next(e)
-    const { Box, Text } = $.ui.resolve(e)
-    if (s.durationStyle === 'hidden') return <Box />
-    const label = s.durationVerb === 'on' ? `${e.props.word} ${duration(e.props.durationMs)}` : duration(e.props.durationMs)
-    const { marginTop } = SPACING[s.density]
-    if (s.durationStyle === 'compact')
-      return (
-        <Box marginTop={marginTop}>
-          <Text dimColor>✻ {label}</Text>
-        </Box>
-      )
-    return (
-      <Box marginTop={marginTop}>
-        <Text color={s.accent} dimColor wrap="truncate">
-          {rule(label, (e.viewport?.columns ?? 80) - 2)}
-        </Text>
-      </Box>
-    )
+    const { word, durationMs } = e.props
+    return drawDuration($.ui.resolve(e), await read($, settings), word, durationMs, e.viewport?.columns ?? 80) ?? next(e)
+  }).catch(($, e, next) => next(e))
+
+  // `/style preview`'s row: a labeled sample of every site, drawn by the same code as the sites,
+  // with stand-ins for what the engine draws. It reads the settings, so it redraws as they change.
+  on('ui.render', { component: 'CommandOutput', props: { command: 'style', args: 'preview' } }, async ($, e) => {
+    return drawPreview($.ui.resolve(e), await read($, settings), e.viewport?.columns ?? 80)
   }).catch(($, e, next) => next(e))
 }
