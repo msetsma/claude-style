@@ -1,6 +1,6 @@
 {
   "name": "style",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Restyles Claude Code's UI: prompt bubbles, reply cards, tool-call cards and rails, framed plugin bands, notices, mode badges, the prompt hint, question dialogs and the turn-time line; every site set in a /style pane and drawn in your theme's colors.",
   "author": {
     "name": "Mitchell Setsma"

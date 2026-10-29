@@ -86,6 +86,7 @@ test('/style opens the settings pane', async ($, on) => {
   const opened: string[] = []
   on('ui.open', ($, e) => {
     opened.push(e.id)
+    expect(e).toMatchObject({ backgroundColor: 'transparent' })
     return { value: { isPlaced: true as const } }
   })
   const ran = await $.command.run({

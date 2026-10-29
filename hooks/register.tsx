@@ -32,7 +32,8 @@ export const register: Register = on => {
 
   on('command.run', { command: 'style' }, async ($, e) => {
     if (e.args.trim() === 'preview') return { text: 'Style preview' }
-    await $.ui.open({ id: PANE, title: 'Style', focus: true, closeOnEscape: true, rows: 80, columns: 66 })
+    // Transparent: the pane shows the terminal's own background, not the surface's gray fill.
+    await $.ui.open({ id: PANE, title: 'Style', focus: true, closeOnEscape: true, rows: 80, columns: 66, backgroundColor: 'transparent' })
     return { text: 'Style settings opened.' }
   })
 
