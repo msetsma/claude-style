@@ -2,11 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { drawBand, drawDuration, drawHint, drawMode, drawNotice, drawPreview, drawPrompt, drawQuestion, drawReply, drawResult, drawTool } from './draw'
-import { PANE, drawPane } from './pane'
-import { DEFAULTS, loadSettings, ours } from './settings'
+import { LIST, PANE, drawPane } from './pane'
+import { DEFAULTS, edited, loadSettings, ours, stepped } from './settings'
 import type { StyleSettings as Settings } from '../types'
 
-export { DEFAULTS, OPTIONS, cleanLabel, duration, loadSettings, outputText, rule, shown, target, toolColor } from './settings'
+export { DEFAULTS, OPTIONS, cleanLabel, edited, stepped, duration, loadSettings, outputText, rule, shown, target, toolColor } from './settings'
 export { PALETTES, paint } from './palettes'
 
 const settings = atom({ plugin: 'style', key: 'settings' } as const, DEFAULTS)
@@ -38,12 +38,18 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const act = {
-      change: (change: (s: Settings) => Settings) => void changeSettings($, change),
+      step: (k: keyof Settings, by: number) => void changeSettings($, x => stepped(x, k, by)),
       reset: () => void changeSettings($, () => DEFAULTS),
       preview: () => void $.command.run({ command: 'style', args: 'preview' }),
       close: () => void $.ui.close({ id: PANE }),
     }
-    return drawPane(act, $.ui.resolve(e), await read($, settings))
+    return drawPane(act, $.ui.resolve(e), await read($, settings), e.props.scroll.bodyRows)
+  })
+
+  // The settings list's edits: a step of a choice or a typed label; anything else is dropped.
+  on('ui.message', { component: 'Pane', requestId: PANE, element: LIST }, async ($, e) => {
+    if (edited(await read($, settings), e.data)) await changeSettings($, x => edited(x, e.data) ?? x)
+    return {}
   })
 
   // Each site: the engine's drawing when the site is left to it, else ours.
