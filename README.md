@@ -9,29 +9,31 @@ Claude Code's UI, and `/style` opens a pane where each part is set:
 
 | Part | Options |
 |---|---|
-| Defaults | border (round, single, double, bold, dashed, classic), color, spacing (compact, normal, roomy) |
-| Your prompts | bubble, bar or plain; color |
-| Plugin bands (rows other mods draw above the prompt) | a frame in a border |
-| Tool calls | rail, card or compact, each a `Tool(target)` line without Claude Code's dot; colored by tool, status or one color; output full, summarized or hidden (errors always show) |
-| Notices | line or card; color |
-| Mode badge | pills, brackets or plain; color |
+| Defaults | palette (Claude theme or a built-in one), border (round, single, double, bold, dashed, classic), color, spacing (compact, normal, roomy), labels in the top border or inside |
+| Your prompts | bubble, bar or plain; left or right aligned; color; fill; a label |
+| Replies (Claude's text between tool calls) | card, rail or rule; color; fill; a label, its text your own, on a reply's first block; card width full or fit |
+| Plugin bands (rows other mods draw above the prompt) | a frame in a border, with a label |
+| Tool calls | rail, card or compact, each a `Tool(target)` line without Claude Code's dot (a card with border labels puts the tool's name in the border); colored by tool, status or one color; card fill; output full, summarized or hidden, a press on `▸` opens it (errors and ctrl+o always show it whole) |
+| Notices | line or card; color; a card label |
+| Mode badge | solid pills, pills capped with half blocks (any font) or Nerd Font glyphs, brackets or plain; color |
 | Prompt hint | color, dimmed |
-| Questions | a tab over the dialog in a border and color |
+| Questions | a tab over the dialog in a border and color, its label your own |
 | Turn time | a rule across the width, compact or hidden; with or without the verb |
 
 Every part except Defaults has a Drawn by row: `style` draws it as set, `Claude Code`
-leaves it as Claude Code draws it and dims the part's other rows, which then ignore
-presses. The pane opens with the theme's colors, numbered, and color rows name
-their color by that number.
+leaves it as Claude Code draws it and dims the part's other rows, which then take no input.
 
-Press a row to cycle its value. Preview, or `/style preview`, prints a labeled
-sample of every part into the transcript, drawn by the same code as the parts
-themselves. Settings persist across sessions.
+In the pane, Tab and Shift+Tab move between rows, ↑ and ↓ change a row's value and
+Enter sets it; a label row is a field, Enter saves it (empty for none). Preview, or
+`/style preview`, prints a labeled sample of every part into the transcript, drawn
+by the same code as the parts themselves. Settings persist across sessions.
 
-Colors are theme keys (`permission`, `planMode`, `promptBorder`, ...), so
-everything draws in the colors of your Claude Code theme, custom themes
-included. The pane names each color by its role in the theme and shows a
-swatch of what your theme makes it.
+Colors are nine numbered slots, 1 to 9, shown as a legend at the top of the pane.
+Under the `Claude theme` palette each slot is a theme key, so custom Claude Code
+themes apply; the built-in palettes are Catppuccin, Dracula, Tokyo Night, Gruvbox,
+Nord, One Dark, Solarized, Rosé Pine, Monokai and Everforest, each in its dark
+variant. A fill paints a card's inside in the palette's surface tint, or in a slot's
+color with dark text; the `surface` fill needs a built-in palette.
 
 Claude Code draws some things itself with no hook for a mod: the prompt input
 box, the divider of a docked pane, the permission dialog and the welcome
@@ -58,7 +60,11 @@ claude plugin install style@claude-style
 .claude-plugin/plugin.json        # name, version, description, types
 .claude-plugin/marketplace.json   # makes the repo installable as a marketplace
 hooks/hooks.json                  # { "modules": ["./register.tsx"] }
-hooks/register.tsx                # the mod
+hooks/register.tsx                # the hooks: which site draws what
+hooks/settings.ts                 # options, defaults, loading stored settings
+hooks/palettes.ts                 # the built-in palettes and slot colors
+hooks/draw.tsx                    # each site's drawing
+hooks/pane.tsx                    # the /style pane
 types/index.d.ts                  # the settings the mod keeps in $.state
 tests/style.test.tsx
 demo/                             # the README GIF: vhs tape, setup, offline fake API
