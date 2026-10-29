@@ -270,14 +270,14 @@ test('tool results: full beside the rail, a summary of the first line, or hidden
     const ui = await $.ui.mount(toolResult(surface, OUT))
     const shown = await texts(ui)
     expect(shown).toContain('⎿  one')
-    expect(await ui.find({ key: 'fold:t1' })).toMatchObject({ text: '▸ +2 lines' })
+    expect(await ui.find({ key: 'fold:t1' })).toMatchObject({ props: { text: '[▸ +2 lines](#style-fold)' } })
     expect(shown).not.toContain('three')
     // A press opens the folded output, another folds it again.
-    await ui.press({ key: 'fold:t1' })
+    await ui.press({ key: 'fold:t1', link: { href: '#style-fold' } })
     expect(JSON.stringify(await ui.drawn())).toContain('"engine"')
-    expect(await ui.find({ key: 'fold:t1' })).toMatchObject({ text: '▾ fold output' })
-    await ui.press({ key: 'fold:t1' })
-    expect(await ui.find({ key: 'fold:t1' })).toMatchObject({ text: '▸ +2 lines' })
+    expect(await ui.find({ key: 'fold:t1' })).toMatchObject({ props: { text: '[▾ fold output](#style-fold)' } })
+    await ui.press({ key: 'fold:t1', link: { href: '#style-fold' } })
+    expect(await ui.find({ key: 'fold:t1' })).toMatchObject({ props: { text: '[▸ +2 lines](#style-fold)' } })
     await ui.unmount()
   }
   // ctrl+o's expanded view always shows the whole output.
@@ -287,7 +287,7 @@ test('tool results: full beside the rail, a summary of the first line, or hidden
   for (const surface of SURFACES) {
     const hidden = await $.ui.mount(toolResult(surface, OUT))
     expect(JSON.stringify(await hidden.drawn())).not.toContain('"engine"')
-    expect(await hidden.find({ key: 'fold:t1' })).toMatchObject({ text: '▸ show output' })
+    expect(await hidden.find({ key: 'fold:t1' })).toMatchObject({ props: { text: '[▸ show output](#style-fold)' } })
     expect(await (await $.ui.mount(toolResult(surface, 'boom', true))).drawn()).toMatchObject(ENGINE)
   }
 })
