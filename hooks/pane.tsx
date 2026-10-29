@@ -1,9 +1,8 @@
-import { atom, update } from 'claude-code'
-import type { Elements, EngineInterface, RenderNode, RenderSurface } from 'claude-code'
+import type { Elements, RenderNode, RenderSurface } from 'claude-code'
 
 import { BORDER_SAMPLES, badge } from './draw'
 import { ACCENTS, fillOf, paint, paletteName } from './palettes'
-import { DEFAULTS, GROUPS, OPTIONS, accentOf, borderOf, cleanLabel, colorOf, inactive, isColorKey, isText, shown, toolColor, valuesOf } from './settings'
+import { GROUPS, OPTIONS, accentOf, borderOf, cleanLabel, colorOf, inactive, isColorKey, isText, shown, toolColor, valuesOf } from './settings'
 import type { Key } from './settings'
 import type { Border, StyleSettings as Settings } from '../types'
 
@@ -11,10 +10,12 @@ export const PANE = 'style'
 
 type Els = Elements[RenderSurface]
 
-const settings = atom({ plugin: 'style', key: 'settings' } as const, DEFAULTS)
-
-export async function changeSettings($: EngineInterface, change: (s: Settings) => Settings) {
-  await $.store.set('settings', await update($, settings, change))
+// What the pane's controls do, run by the hooks module, which holds the engine.
+export type PaneActions = {
+  change: (change: (s: Settings) => Settings) => void
+  reset: () => void
+  preview: () => void
+  close: () => void
 }
 
 const SAMPLES: Partial<Record<Key, Record<string, string>>> = {
@@ -69,7 +70,7 @@ const optionLabel = (k: Key, v: string) => (k === 'palette' ? paletteName(v as S
 
 // One setting's row: a picker the arrows change, a field for a typed label, or a dim line when
 // the value changes nothing.
-function row($: EngineInterface, els: Els, s: Settings, k: Key) {
+function row(act: PaneActions, els: Els, s: Settings, k: Key) {
   const { Box, Text, Button } = els
   const label = `  ${OPTIONS[k].label}`.padEnd(14)
   const current = isText(k) ? s[k] || '(none)' : optionLabel(k, s[k] as string)
@@ -96,7 +97,7 @@ function row($: EngineInterface, els: Els, s: Settings, k: Key) {
     const values = valuesOf(k)
     const next = values[(values.indexOf(s[k] as string) + 1) % values.length]
     return (
-      <Button key={`set:${k}`} plain onPress={() => changeSettings($, x => ({ ...x, [k]: next }))}>
+      <Button key={`set:${k}`} plain onPress={() => act.change(x => ({ ...x, [k]: next }))}>
         <Text dimColor>{label}</Text>
         <Text bold>{current}</Text>
       </Button>
@@ -110,7 +111,7 @@ function row($: EngineInterface, els: Els, s: Settings, k: Key) {
         label={label}
         value={s[k]}
         placeholder="none"
-        onSubmit={(value: string) => changeSettings($, x => ({ ...x, [k]: cleanLabel(value) }))}
+        onSubmit={(value: string) => act.change(x => ({ ...x, [k]: cleanLabel(value) }))}
       />
     )
   return (
@@ -120,7 +121,7 @@ function row($: EngineInterface, els: Els, s: Settings, k: Key) {
         label={label}
         options={valuesOf(k).map(v => ({ value: v, label: optionLabel(k, v) }))}
         value={s[k] as string}
-        onSelect={(value: string) => changeSettings($, x => ({ ...x, [k]: value }))}
+        onSelect={(value: string) => act.change(x => ({ ...x, [k]: value }))}
       />
       {sample(els, s, k)}
     </Box>
@@ -128,7 +129,7 @@ function row($: EngineInterface, els: Els, s: Settings, k: Key) {
 }
 
 // The settings pane: a legend of the palette's nine numbered colors, then one row per option grouped by site.
-export function drawPane($: EngineInterface, els: Els, s: Settings) {
+export function drawPane(act: PaneActions, els: Els, s: Settings) {
   const { Box, Button, Text } = els
   return (
     <Box flexDirection="column">
@@ -154,13 +155,13 @@ export function drawPane($: EngineInterface, els: Els, s: Settings) {
             <Text bold color={accentOf(s)}>{title}</Text>
             <Text dimColor>{`  ${about}`}</Text>
           </Text>
-          {keys.map(k => row($, els, s, k))}
+          {keys.map(k => row(act, els, s, k))}
         </Box>
       ))}
       <Box marginTop={1} gap={1}>
-        <Button key="reset" label="Reset" onPress={() => changeSettings($, () => DEFAULTS)} />
-        <Button key="preview" label="Preview" onPress={() => $.command.run({ command: 'style', args: 'preview' })} />
-        <Button key="close" label="Close" onPress={() => $.ui.close({ id: PANE })} />
+        <Button key="reset" label="Reset" onPress={act.reset} />
+        <Button key="preview" label="Preview" onPress={act.preview} />
+        <Button key="close" label="Close" onPress={act.close} />
       </Box>
     </Box>
   )

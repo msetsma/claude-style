@@ -1,15 +1,20 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import { drawBand, drawDuration, drawHint, drawMode, drawNotice, drawPreview, drawPrompt, drawQuestion, drawReply, drawResult, drawTool } from './draw'
 import { PANE, drawPane } from './pane'
 import { DEFAULTS, loadSettings, ours } from './settings'
+import type { StyleSettings as Settings } from '../types'
 
 export { DEFAULTS, OPTIONS, cleanLabel, duration, loadSettings, outputText, rule, shown, target, toolColor } from './settings'
 export { PALETTES, paint } from './palettes'
 
 const settings = atom({ plugin: 'style', key: 'settings' } as const, DEFAULTS)
 const opened = atom({ plugin: 'style', key: 'opened' } as const, [] as string[])
+
+async function changeSettings($: EngineInterface, change: (s: Settings) => Settings) {
+  await $.store.set('settings', await update($, settings, change))
+}
 
 // A border takes one column each side.
 const BORDER = 2
@@ -31,7 +36,15 @@ export const register: Register = on => {
     return { text: 'Style settings opened.' }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => drawPane($, $.ui.resolve(e), await read($, settings)))
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const act = {
+      change: (change: (s: Settings) => Settings) => void changeSettings($, change),
+      reset: () => void changeSettings($, () => DEFAULTS),
+      preview: () => void $.command.run({ command: 'style', args: 'preview' }),
+      close: () => void $.ui.close({ id: PANE }),
+    }
+    return drawPane(act, $.ui.resolve(e), await read($, settings))
+  })
 
   // Each site: the engine's drawing when the site is left to it, else ours.
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'composer' } } }, async ($, e, next) => {
