@@ -17,6 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: npm install -g @anthropic-ai/claude-code@2.1.296
+      - run: npm install -g @anthropic-ai/claude-code@2.1.312
       - run: claude plugin validate .
       - run: claude plugin test .
