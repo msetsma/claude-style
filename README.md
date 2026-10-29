@@ -23,8 +23,10 @@ Claude Code's UI, and `/style` opens a pane where each part is set:
 Every part except Defaults has a Drawn by row: `style` draws it as set, `Claude Code`
 leaves it as Claude Code draws it and dims the part's other rows, which then take no input.
 
-In the pane, Tab and Shift+Tab move between rows, ↑ and ↓ change a row's value and
-Enter sets it; a label row is a field, Enter saves it (empty for none). Preview, or
+In the pane, click the settings list once to give it the keys: ↑ and ↓ move the
+cursor between rows, ← and → step the value under it (Enter steps forward too), and
+on a label row typing edits the label and Enter saves it (empty for none). Esc hands
+the keys back. Preview, or
 `/style preview`, prints a labeled sample of every part into the transcript, drawn
 by the same code as the parts themselves. Settings persist across sessions.
 

@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On, RenderSurface } from 'claude-code'
 
 import { DEFAULTS, OPTIONS, cleanLabel, duration, loadSettings, outputText, paint, rule, target, toolColor } from '../hooks/register'
+import { LIST, listProps } from '../hooks/pane'
 import type { StyleSettings } from '../types'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -31,12 +32,17 @@ const PANE = {
 } as const
 
 // Sets options through the pane, as the person does: picks each row's value, or types its label.
-async function configure($: Engine, change: Partial<StyleSettings>) {
+async function configure($: Engine, change: Partial<StyleSettings>, saved: Record<string, unknown>) {
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   for (const [k, v] of Object.entries(change)) {
-    const key = `set:${k}`
-    if ('text' in OPTIONS[k as keyof StyleSettings]) await pane.input({ key, text: String(v) })
-    else await pane.select({ key, value: String(v) })
+    const key = k as keyof StyleSettings
+    if ('text' in OPTIONS[key]) await pane.post({ key, text: String(v) }, { in: LIST })
+    else
+      for (let i = 0; i < 12; i++) {
+        const now = (saved.settings as StyleSettings | undefined)?.[key] ?? DEFAULTS[key]
+        if (now === v) break
+        await pane.post({ key, step: 1 }, { in: LIST })
+      }
   }
   await pane.unmount()
 }
@@ -92,23 +98,33 @@ test('/style opens the settings pane', async ($, on) => {
   expect(opened).toEqual(['style'])
 })
 
-test('a pick sets a setting, saves it and redraws the site; Reset restores the defaults', async ($, on) => {
+test('down moves to a row, right and left step its value, saved and redrawn; Reset restores the defaults', async ($, on) => {
   const saved = memoryStore(on)
   const PROMPT_ROW = { plugin: 'style', component: 'UserMessage', props: { text: 'hi', origin: { kind: 'composer' }, isExpanded: true } } as const
+  // The terminal's list is a Client that takes the keys; desktop draws the same list.
   for (const surface of SURFACES) {
     const pane = await $.ui.mount({ ...PANE, surface })
-    expect((await pane.find({ key: 'set:border' }))?.props).toMatchObject({ value: 'round' })
     const prompt = await $.ui.mount({ ...PROMPT_ROW, surface })
     expect(await prompt.drawn()).toMatchObject({ props: { borderStyle: 'round' } })
 
-    await pane.select({ key: 'set:border', value: 'single' })
-    expect((await pane.find({ key: 'set:border' }))?.props).toMatchObject({ value: 'single' })
+    // The cursor starts on Palette; down is Border.
+    await pane.key({ key: 'down', in: LIST })
+    await pane.key({ key: 'right', in: LIST })
+    expect(saved.settings).toMatchObject({ border: 'single', palette: 'theme' })
+    await pane.key({ key: 'right', in: LIST })
+    await pane.key({ key: 'left', in: LIST })
     expect(saved.settings).toMatchObject({ border: 'single' })
     expect(await prompt.drawn()).toMatchObject({ props: { borderStyle: 'single' } })
 
     await pane.press({ key: 'reset' })
     expect(saved.settings).toEqual(DEFAULTS)
     expect(await prompt.drawn()).toMatchObject({ props: { borderStyle: 'round' } })
+    // Up from the top stays there; left on Palette wraps to the last palette.
+    await pane.key({ key: 'up', in: LIST })
+    await pane.key({ key: 'up', in: LIST })
+    await pane.key({ key: 'left', in: LIST })
+    expect(saved.settings).toMatchObject({ palette: 'everforest' })
+    await pane.press({ key: 'reset' })
     await prompt.unmount()
     await pane.unmount()
   }
@@ -117,14 +133,16 @@ test('a pick sets a setting, saves it and redraws the site; Reset restores the d
 test('the pane groups one row per option, with samples', async $ => {
   for (const surface of SURFACES) {
     const pane = await $.ui.mount({ ...PANE, surface })
-    for (const k of Object.keys(DEFAULTS)) expect(await pane.find({ key: `set:${k}` })).toBeDefined()
-    // A picker per choice, a field per label; rows whose value changes nothing are dim text.
-    const pickers = (await pane.findAll({ type: 'Select' })).length + (await pane.findAll({ type: 'Input' })).length
-    expect(pickers).toBe(Object.keys(DEFAULTS).length - 2)
+    expect(await pane.find({ type: 'Select' })).toBeUndefined()
     expect(await pane.findAll({ type: 'Button' })).toHaveLength(3)
-    const shown = await texts(pane)
-    for (const title of ['Defaults', 'Tool calls', 'Turn time']) expect(shown).toContain(title)
-    expect((await pane.find({ key: 'row:durationStyle' }))?.text).toContain('── Baked 3s ──')
+    const { rows } = listProps(DEFAULTS)
+    const set = rows.flatMap(r => (r.kind === 'set' ? [r] : []))
+    expect(set.map(r => r.key)).toEqual(expect.arrayContaining(Object.keys(DEFAULTS)))
+    expect(set).toHaveLength(Object.keys(DEFAULTS).length)
+    const heads = rows.flatMap(r => (r.kind === 'head' ? [r.title] : []))
+    for (const title of ['Defaults', 'Tool calls', 'Turn time']) expect(heads).toContain(title)
+    expect(set.find(r => r.key === 'durationStyle')?.sample).toEqual([{ text: '── Baked 3s ──', dim: true }])
+    expect(await pane.find({ type: 'Client' })).toMatchObject({ props: { module: 'hooks/list.tsx' } })
     await pane.unmount()
   }
 })
@@ -138,7 +156,7 @@ const userMessage = (surface: RenderSurface) =>
   }) as const
 
 test('your prompts: bubble, bar, plain, or Claude Code\'s', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(userMessage(surface))
@@ -146,22 +164,22 @@ test('your prompts: bubble, bar, plain, or Claude Code\'s', async ($, on) => {
     expect(await ui.find({ type: 'Text', text: 'hi there' })).toBeDefined()
     await ui.unmount()
   }
-  await configure($, { promptStyle: 'bar', promptColor: 'claude' })
+  await configure($, { promptStyle: 'bar', promptColor: 'claude' }, saved)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(userMessage(surface))
     expect(await ui.find({ type: 'Text', text: /^▎/ })).toMatchObject({ props: { color: 'claude' } })
     await ui.unmount()
   }
-  await configure($, { promptStyle: 'plain' })
+  await configure($, { promptStyle: 'plain' }, saved)
   const plain = await $.ui.mount(userMessage('terminal'))
   expect(await plain.find({ type: 'Text', text: '❯ ' })).toMatchObject({ props: { color: 'claude' } })
-  await configure($, { prompts: 'claude' })
+  await configure($, { prompts: 'claude' }, saved)
   const off = await $.ui.mount(userMessage('terminal'))
   expect(await off.drawn()).toMatchObject(ENGINE)
 })
 
 test('the band: framed only when a plugin drew there, which is told the narrower width', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   const widths: number[] = []
   // A plugin beneath that draws a band unless a turn is running.
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
@@ -185,9 +203,9 @@ test('the band: framed only when a plugin drew there, which is told the narrower
     const empty = await $.ui.mount(band(surface, true))
     expect(await empty.drawn()).toMatchObject(ENGINE)
   }
-  await configure($, { bandBorder: 'double' })
+  await configure($, { bandBorder: 'double' }, saved)
   expect(await (await $.ui.mount(band('terminal', false))).drawn()).toMatchObject({ props: { borderStyle: 'double' } })
-  await configure($, { bands: 'claude' })
+  await configure($, { bands: 'claude' }, saved)
   expect(await (await $.ui.mount(band('terminal', false))).drawn()).toMatchObject({ type: 'Text' })
 })
 
@@ -200,7 +218,7 @@ const toolUse = (surface: RenderSurface, tool: string, extra: object = {}) =>
   }) as const
 
 test("tool rows: our own Tool(target) line, no dot, by rail, card or compact; or Claude Code's", async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(toolUse(surface, 'Bash'))
@@ -209,7 +227,7 @@ test("tool rows: our own Tool(target) line, no dot, by rail, card or compact; or
     expect(JSON.stringify(await ui.drawn())).not.toMatch(/engine|⏺|●/)
     await ui.unmount()
   }
-  await configure($, { toolStyle: 'card', toolColor: 'status' })
+  await configure($, { toolStyle: 'card', toolColor: 'status' }, saved)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(toolUse(surface, 'Edit', { isRunning: true }))
     expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { borderStyle: 'round', borderColor: 'warning' } })
@@ -217,14 +235,14 @@ test("tool rows: our own Tool(target) line, no dot, by rail, card or compact; or
   }
   // The question tool's row draws nothing: no empty card around it.
   expect(await (await $.ui.mount(toolUse('terminal', 'AskUserQuestion'))).drawn()).toMatchObject(ENGINE)
-  await configure($, { toolStyle: 'compact', toolColor: 'mono' })
+  await configure($, { toolStyle: 'compact', toolColor: 'mono' }, saved)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(toolUse(surface, 'Bash'))
     expect(await texts(ui)).toContain('ls -la')
     expect(await ui.find({ type: 'Text', text: /^Bash$/ })).toMatchObject({ props: { color: DEFAULTS.accent } })
     await ui.unmount()
   }
-  await configure($, { tools: 'claude' })
+  await configure($, { tools: 'claude' }, saved)
   expect(await (await $.ui.mount(toolUse('terminal', 'Bash'))).drawn()).toMatchObject(ENGINE)
   expect(await (await $.ui.mount(toolResult('terminal', 'x'))).drawn()).toMatchObject(ENGINE)
 })
@@ -238,7 +256,7 @@ const toolResult = (surface: RenderSurface, output: unknown, isErrored = false) 
   }) as const
 
 test('tool results: full beside the rail, a summary of the first line, or hidden; errors stay whole', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   const OUT = { stdout: 'one\ntwo\nthree', stderr: '', interrupted: false }
   for (const surface of SURFACES) {
@@ -246,7 +264,7 @@ test('tool results: full beside the rail, a summary of the first line, or hidden
     expect(JSON.stringify(await ui.drawn())).toContain('"engine"')
     await ui.unmount()
   }
-  await configure($, { toolResult: 'summary' })
+  await configure($, { toolResult: 'summary' }, saved)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(toolResult(surface, OUT))
     const shown = await texts(ui)
@@ -264,7 +282,7 @@ test('tool results: full beside the rail, a summary of the first line, or hidden
   // ctrl+o's expanded view always shows the whole output.
   const expanded = await $.ui.mount({ ...toolResult('terminal', OUT), props: { ...toolResult('terminal', OUT).props, isExpanded: true } })
   expect(JSON.stringify(await expanded.drawn())).toContain('"engine"')
-  await configure($, { toolResult: 'hidden', toolStyle: 'compact' })
+  await configure($, { toolResult: 'hidden', toolStyle: 'compact' }, saved)
   for (const surface of SURFACES) {
     const hidden = await $.ui.mount(toolResult(surface, OUT))
     expect(JSON.stringify(await hidden.drawn())).not.toContain('"engine"')
@@ -274,21 +292,21 @@ test('tool results: full beside the rail, a summary of the first line, or hidden
 })
 
 test('info notices: a dim line in the color, a card, or the engine', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   // Raised on the terminal only.
   const notice = { plugin: 'style', surface: 'terminal', component: 'InfoNotice', props: { text: 'Model from settings', command: '/model' } } as const
   const line = await $.ui.mount(notice)
   expect(await line.find({ type: 'Text', text: /^Model from settings$/ })).toMatchObject({ props: { color: DEFAULTS.accent, dimColor: true } })
   expect(await line.find({ type: 'Text', text: /^ \/model$/ })).toBeDefined()
-  await configure($, { noticeStyle: 'card', noticeColor: 'ide' })
+  await configure($, { noticeStyle: 'card', noticeColor: 'ide' }, saved)
   expect(await (await $.ui.mount(notice)).drawn()).toMatchObject({ type: 'Box', props: { borderStyle: 'round', borderColor: 'ide' } })
-  await configure($, { notices: 'claude' })
+  await configure($, { notices: 'claude' }, saved)
   expect(await (await $.ui.mount(notice)).drawn()).toMatchObject(ENGINE)
 })
 
 test('the mode footer: solid pills, capped pills, brackets, plain; no modes is the engine', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   const footer = (surface: RenderSurface, modes: string[]) => ({ plugin: 'style', surface, component: 'SessionMode', props: { modes } }) as const
   for (const surface of SURFACES) {
@@ -297,29 +315,29 @@ test('the mode footer: solid pills, capped pills, brackets, plain; no modes is t
     expect(await (await $.ui.mount(footer(surface, []))).drawn()).toMatchObject(ENGINE)
     await ui.unmount()
   }
-  await configure($, { modeStyle: 'caps' })
+  await configure($, { modeStyle: 'caps' }, saved)
   const caps = await $.ui.mount(footer('terminal', ['focus']))
   expect(await caps.find({ type: 'Text', text: /^▐$/ })).toMatchObject({ props: { color: DEFAULTS.modeColor } })
   expect(await caps.find({ type: 'Text', text: /^focus$/ })).toMatchObject({ props: { backgroundColor: DEFAULTS.modeColor } })
-  await configure($, { modeStyle: 'nerd' })
+  await configure($, { modeStyle: 'nerd' }, saved)
   expect(await (await $.ui.mount(footer('terminal', ['focus']))).find({ type: 'Text', text: /^\ue0b6$/ })).toBeDefined()
-  await configure($, { modeStyle: 'brackets' })
+  await configure($, { modeStyle: 'brackets' }, saved)
   expect(await texts(await $.ui.mount(footer('desktop', ['focus'])))).toContain('[focus]')
-  await configure($, { modeStyle: 'plain' })
+  await configure($, { modeStyle: 'plain' }, saved)
   expect(await texts(await $.ui.mount(footer('terminal', ['a', 'b'])))).toContain(' · ')
-  await configure($, { mode: 'claude' })
+  await configure($, { mode: 'claude' }, saved)
   expect(await (await $.ui.mount(footer('terminal', ['a']))).drawn()).toMatchObject(ENGINE)
 })
 
 test('the prompt hint: dim in the accent by default, recolored on request, Claude Code\'s when handed back', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   const hint = (surface: RenderSurface) =>
     ({ plugin: 'style', surface, component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } }) as const
   expect(await (await $.ui.mount(hint('terminal'))).drawn()).toMatchObject({ type: 'Text', props: { color: DEFAULTS.accent, dimColor: true } })
-  await configure($, { hint: 'claude' })
+  await configure($, { hint: 'claude' }, saved)
   expect(await (await $.ui.mount(hint('terminal'))).drawn()).toMatchObject(ENGINE)
-  await configure($, { hint: 'style', hintColor: 'suggestion', hintDim: 'off' })
+  await configure($, { hint: 'style', hintColor: 'suggestion', hintDim: 'off' }, saved)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(hint(surface))
     expect(await ui.drawn()).toMatchObject({ type: 'Text', props: { color: 'suggestion', dimColor: false } })
@@ -329,7 +347,7 @@ test('the prompt hint: dim in the accent by default, recolored on request, Claud
 })
 
 test("the question dialog: the engine's own under a tab", async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   const dialog = (surface: RenderSurface) =>
     ({
@@ -345,28 +363,28 @@ test("the question dialog: the engine's own under a tab", async ($, on) => {
     expect(await ui.find({ type: 'Text', text: '╭─ Question ─╮' })).toMatchObject({ props: { color: 'permission' } })
     await ui.unmount()
   }
-  await configure($, { questionFrame: 'double' })
+  await configure($, { questionFrame: 'double' }, saved)
   expect(await (await $.ui.mount(dialog('terminal'))).find({ type: 'Text', text: '╔═ Question ═╗' })).toBeDefined()
-  await configure($, { questions: 'claude' })
+  await configure($, { questions: 'claude' }, saved)
   expect(await (await $.ui.mount(dialog('terminal'))).drawn()).toMatchObject(ENGINE)
 })
 
 test('turn duration: a rule across the width, compact, the engine, or nothing', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   // Raised on the terminal only.
   const line = { plugin: 'style', surface: 'terminal', component: 'TurnDuration', viewport: { columns: 40, rows: 20 }, props: { word: 'Baked', durationMs: 64000 } } as const
   expect(await (await $.ui.mount(line)).find({ type: 'Text', text: rule('Baked 1m 4s', 38) })).toBeDefined()
-  await configure($, { durationStyle: 'compact', durationVerb: 'off' })
+  await configure($, { durationStyle: 'compact', durationVerb: 'off' }, saved)
   expect(await (await $.ui.mount(line)).find({ type: 'Text', text: '✻ 1m 4s' })).toBeDefined()
-  await configure($, { turnTime: 'claude' })
+  await configure($, { turnTime: 'claude' }, saved)
   expect(await (await $.ui.mount(line)).drawn()).toMatchObject(ENGINE)
-  await configure($, { turnTime: 'style', durationStyle: 'hidden' })
+  await configure($, { turnTime: 'style', durationStyle: 'hidden' }, saved)
   expect(await (await $.ui.mount(line)).find({ type: 'Text' })).toBeUndefined()
 })
 
 test('Preview runs /style preview, whose row shows every site labeled, as the sites draw it', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   const runs: unknown[] = []
   on('command.run', ($, e) => {
@@ -390,7 +408,7 @@ test('Preview runs /style preview, whose row shows every site labeled, as the si
     await ui.unmount()
   }
   // Sites left to the engine show a stand-in, and the row follows the settings.
-  await configure($, { prompts: 'claude', durationStyle: 'compact' })
+  await configure($, { prompts: 'claude', durationStyle: 'compact' }, saved)
   const shown = await texts(await $.ui.mount(row('terminal')))
   expect(shown).toContain('❯ fix the login bug')
   expect(shown).toContain('✻ Baked 3s')
@@ -402,16 +420,19 @@ test('a site handed to Claude Code dims its other rows to text; colors are numbe
   const saved = memoryStore(on)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await texts(pane)).toContain('■9')
-  const modeColor = await pane.find({ key: 'set:modeColor' })
-  expect(modeColor?.props).toMatchObject({ value: 'planMode' })
-  expect(JSON.stringify(modeColor?.props)).toContain('{"value":"planMode","label":"9"}')
-  await pane.select({ key: 'set:tools', value: 'claude' })
-  expect(await pane.find({ key: 'set:tools' })).toMatchObject({ props: { value: 'claude' } })
-  expect(await pane.find({ key: 'set:toolStyle' })).toMatchObject({ type: 'Box', text: expect.stringContaining('rail') })
-  expect(await pane.find({ type: 'Select', key: 'set:toolStyle' })).toBeUndefined()
-  expect(saved.settings).toMatchObject({ tools: 'claude', toolStyle: DEFAULTS.toolStyle })
-  await pane.select({ key: 'set:tools', value: 'style' })
-  await pane.select({ key: 'set:toolStyle', value: 'card' })
+  const row = (s: StyleSettings, k: string) => listProps(s).rows.find(r => r.kind === 'set' && r.key === k)
+  expect(row(DEFAULTS, 'modeColor')).toMatchObject({ value: '9', off: false })
+  await pane.post({ key: 'tools', step: 1 }, { in: LIST })
+  expect(saved.settings).toMatchObject({ tools: 'claude' })
+  expect(row(saved.settings as StyleSettings, 'toolStyle')).toMatchObject({ off: true })
+  // A step on a dim row, a label's step and a choice's text are dropped.
+  await pane.post({ key: 'toolStyle', step: 1 }, { in: LIST })
+  await pane.post({ key: 'promptLabel', step: 1 }, { in: LIST })
+  await pane.post({ key: 'border', text: 'x' }, { in: LIST })
+  await pane.post({ key: 'nope', step: 1 }, { in: LIST })
+  expect(saved.settings).toMatchObject({ tools: 'claude', toolStyle: DEFAULTS.toolStyle, border: DEFAULTS.border })
+  await pane.post({ key: 'tools', step: -1 }, { in: LIST })
+  await pane.post({ key: 'toolStyle', step: -1 }, { in: LIST })
   expect(saved.settings).toMatchObject({ toolStyle: 'card' })
   await pane.unmount()
 })
@@ -425,7 +446,7 @@ const reply = (surface: RenderSurface, isFirstOfReply = true) =>
   }) as const
 
 test("replies: markdown in a card, beside a rail, or under a rule, named on a reply's first block; or Claude Code's", async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(reply(surface))
@@ -439,27 +460,27 @@ test("replies: markdown in a card, beside a rail, or under a rule, named on a re
     expect(await more.find({ type: 'Text', text: / ?Claude ?/ })).toBeUndefined()
     await more.unmount()
   }
-  await configure($, { labels: 'inside', replyName: 'Opus' })
+  await configure($, { labels: 'inside', replyName: 'Opus' }, saved)
   expect(await (await $.ui.mount(reply('terminal'))).find({ type: 'Text', text: 'Opus' })).toBeDefined()
-  await configure($, { replyWidth: 'fit' })
+  await configure($, { replyWidth: 'fit' }, saved)
   expect(await (await $.ui.mount(reply('terminal'))).drawn()).toMatchObject({ props: { alignSelf: 'flex-start' } })
-  await configure($, { replyStyle: 'rail', replyColor: 'ide' })
+  await configure($, { replyStyle: 'rail', replyColor: 'ide' }, saved)
   const rail = await $.ui.mount(reply('terminal'))
   expect(await rail.find({ type: 'Text', text: /^▌/ })).toMatchObject({ props: { color: 'ide' } })
-  await configure($, { replyStyle: 'rule', replyLabel: 'off' })
+  await configure($, { replyStyle: 'rule', replyLabel: 'off' }, saved)
   const ruled = await $.ui.mount(reply('terminal'))
   expect(await ruled.find({ type: 'Text', text: /^─+$/ })).toBeDefined()
   expect(await ruled.find({ type: 'Text', text: 'Claude' })).toBeUndefined()
-  await configure($, { replies: 'claude' })
+  await configure($, { replies: 'claude' }, saved)
   expect(await (await $.ui.mount(reply('terminal'))).drawn()).toMatchObject(ENGINE)
 })
 
 test('palettes: a built-in palette paints every slot and role in its own colors', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
   expect(paint(DEFAULTS, 'suggestion')).toBe('suggestion')
   expect(paint({ palette: 'nord' }, 'suggestion')).toBe('#81a1c1')
-  await configure($, { palette: 'catppuccin' })
+  await configure($, { palette: 'catppuccin' }, saved)
   const ui = await $.ui.mount(userMessage('terminal'))
   expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { borderColor: '#89b4fa' } })
   const tool = await $.ui.mount(toolUse('terminal', 'Bash'))
@@ -469,15 +490,15 @@ test('palettes: a built-in palette paints every slot and role in its own colors'
 })
 
 test('your prompts: right-aligned, labeled in the border, filled', async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
-  await configure($, { promptAlign: 'right', promptLabel: 'You', promptFill: 'surface', palette: 'nord' })
+  await configure($, { promptAlign: 'right', promptLabel: 'You', promptFill: 'surface', palette: 'nord' }, saved)
   const ui = await $.ui.mount(userMessage('terminal'))
   expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { alignSelf: 'flex-end', backgroundColor: '#3b4252' } })
   expect(await ui.find({ type: 'Text', text: ' You ' })).toBeDefined()
-  await configure($, { promptFill: 'warning' })
+  await configure($, { promptFill: 'warning' }, saved)
   expect(await (await $.ui.mount(userMessage('terminal'))).find({ type: 'Text', text: 'hi there' })).toMatchObject({ props: { color: '#2e3440' } })
-  await configure($, { promptStyle: 'bar' })
+  await configure($, { promptStyle: 'bar' }, saved)
   const bar = await $.ui.mount(userMessage('terminal'))
   expect(await bar.drawn()).toMatchObject({ props: { justifyContent: 'flex-end' } })
   expect(await bar.find({ type: 'Text', text: /^▐/ })).toBeDefined()
@@ -487,17 +508,31 @@ test('labels: typed labels are kept to one short line', async ($, on) => {
   const saved = memoryStore(on)
   expect(cleanLabel('  a\nb\tc  ')).toBe('a b c')
   expect(cleanLabel('x'.repeat(40))).toHaveLength(24)
-  await configure($, { bandLabel: 'plugins\n' })
+  await configure($, { bandLabel: 'plugins\n' }, saved)
   expect(saved.settings).toMatchObject({ bandLabel: 'plugins' })
   expect(loadSettings({ questionLabel: 7 })).toMatchObject({ questionLabel: 'Question' })
 })
 
 test("tool cards with border labels name the tool in the border; an expanded row is the engine's", async ($, on) => {
-  memoryStore(on)
+  const saved = memoryStore(on)
   engineBeneath(on)
-  await configure($, { toolStyle: 'card' })
+  await configure($, { toolStyle: 'card' }, saved)
   const ui = await $.ui.mount(toolUse('terminal', 'Bash'))
   expect(await ui.find({ type: 'Text', text: ' Bash ' })).toBeDefined()
   expect(await texts(ui)).toContain('ls -la')
   expect(await (await $.ui.mount(toolUse('terminal', 'Bash', { isExpanded: true }))).drawn()).toMatchObject(ENGINE)
+})
+
+test('on a label row, typing edits the label and Enter saves it', async ($, on) => {
+  const saved = memoryStore(on)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // Palette, four more defaults, then Your prompts: Drawn by, Style, Align, Color, Fill, Label.
+  for (let i = 0; i < 10; i++) await pane.key({ key: 'down', in: LIST })
+  for (const key of ['Y', 'o', 'x', 'backspace', 'u']) await pane.key({ key, in: LIST })
+  // Left and right on a label row change nothing.
+  await pane.key({ key: 'left', in: LIST })
+  expect(saved.settings).toBeUndefined()
+  await pane.key({ key: 'return', in: LIST })
+  expect(saved.settings).toMatchObject({ promptLabel: 'You' })
+  await pane.unmount()
 })

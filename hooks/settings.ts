@@ -235,3 +235,24 @@ export function outputText(output: unknown): string | undefined {
   if (Array.isArray(output)) return output.map(b => (b as { text?: unknown })?.text).filter(t => typeof t === 'string').join('\n')
   return undefined
 }
+
+/** The settings with `k` stepped `by` values along its list, wrapping at either end. */
+export function stepped(s: Settings, k: Key, by: number): Settings {
+  const values = valuesOf(k)
+  if (values.length === 0) return s
+  const at = values.indexOf(s[k] as string)
+  return { ...s, [k]: values[(((at + by) % values.length) + values.length) % values.length] }
+}
+
+/**
+ * The settings after one edit the settings list posted (`{ key, step }` or `{ key, text }`), or
+ * undefined for a post that names no setting, a step on a label, text on a choice, or a row the
+ * current settings dim.
+ */
+export function edited(s: Settings, data: unknown): Settings | undefined {
+  const d = (data ?? {}) as { key?: unknown; step?: unknown; text?: unknown }
+  const k = d.key as Key
+  if (typeof d.key !== 'string' || !(d.key in OPTIONS) || inactive(s, k)) return undefined
+  if (isText(k)) return typeof d.text === 'string' ? { ...s, [k]: cleanLabel(d.text) } : undefined
+  return d.step === 1 || d.step === -1 ? stepped(s, k, d.step) : undefined
+}
