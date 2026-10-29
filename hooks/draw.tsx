@@ -190,6 +190,9 @@ export function drawTool(els: Els, s: Settings, call: Call) {
   return card(els, s, { color, label: inBorder ? name : undefined, fill: s.toolFill, marginTop, alignSelf: 'flex-start', children: line })
 }
 
+// The href of a folded result's toggle link.
+export const FOLD_LINK = '#style-fold'
+
 type Result = { tool: string; output: unknown; isErrored: boolean; isExpanded?: boolean }
 // A folded result's toggle: whether it is open, and what flips it.
 export type Fold = { key: string; isOpen: boolean; toggle: () => void }
@@ -198,16 +201,15 @@ export type Fold = { key: string; isOpen: boolean; toggle: () => void }
 // An error always shows whole, and so does ctrl+o's expanded view; a folded one opens on a press.
 export async function drawResult(els: Els, s: Settings, result: Result, inner: Inner, fold?: Fold) {
   if (!ours(s, 'tools')) return inner()
-  const { Box, Text, Button } = els
+  const { Box, Text, Markdown } = els
   const glyph = s.toolStyle === 'rail' ? '▎' : s.toolStyle === 'card' ? '┆' : undefined
   const beside = (body: RenderElement) => (glyph ? railed(els, toolColor(s, result.tool, false, result.isErrored), glyph, body) : body)
   const whole = async () => (glyph ? beside(await inner()) : inner())
   if (result.isErrored || result.isExpanded || s.toolResult === 'full') return whole()
+  // A link, not a Button: the transcript delivers plain clicks to a Markdown's links alone.
   const toggle = (label: string) =>
     fold ? (
-      <Button key={fold.key} plain dimColor onPress={fold.toggle}>
-        {label}
-      </Button>
+      <Markdown key={fold.key} dimColor text={`[${label}](${FOLD_LINK})`} pressableLinks={[FOLD_LINK]} onLinkPress={fold.toggle} />
     ) : (
       <Text dimColor>{label}</Text>
     )
